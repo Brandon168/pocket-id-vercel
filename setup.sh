@@ -10,9 +10,10 @@
 # Requires: curl, python3. No other dependencies.
 #
 # Contract:
-#   1. Ensure a real admin user exists; print a Login Code link for the instructor
+#   1. App config FIRST (fresh instances require user email — admin creation fails
+#      without flipping it): signups withToken, requireUserEmail=false, no verification.
+#   2. Ensure a real admin user exists; print a Login Code link for the instructor
 #      (passkeys cannot be created via API — the instructor registers theirs in-browser).
-#   2. App config: signups withToken, requireUserEmail=false, email verification off.
 #   3. Group "workshop"; OIDC client "workshop-app" (public, PKCE) with callback
 #      wildcard https://*.vercel.app/api/auth/callback/pocket-id, restricted to "workshop".
 #   4. Signup token: use limit = headcount + 20%, expiry = workshop days, default group
@@ -71,8 +72,31 @@ wait_warm() {
   echo "instance never went warm; check deployment logs" >&2; exit 1
 }
 
-# --- 1. Admin user -----------------------------------------------------------
-echo "==> step 1/4: admin user"
+# --- 0. Warm gate: never provision against a cold/contended instance ----------
+wait_warm
+
+# --- 1. App config first: fresh instances require user email by default, and
+# admin creation fails without one. Flip to token signups + no email requirement
+# before creating anyone. (PUT replaces the ENTIRE config — always GET-modify-PUT.)
+echo "==> step 1/4: app config (signups withToken, no email requirement)"
+CUR="$(api_call GET "/application-configuration/all")"
+sleep "$SLEEP_SECS"
+UPD="$(mktemp)"; trap 'rm -f "$UPD"' EXIT
+echo "$CUR" | python3 -c "
+import json, sys
+cur = {c['key']: c['value'] for c in json.load(sys.stdin)}
+cur['allowUserSignups'] = 'withToken'
+cur['requireUserEmail'] = 'false'
+cur['emailsVerified'] = 'false'
+cur['emailVerificationEnabled'] = 'false'
+json.dump(cur, open('$UPD', 'w'))
+"
+api_call PUT "/application-configuration" "$UPD" >/dev/null
+sleep "$SLEEP_SECS"
+echo "    config updated."
+
+# --- 2. Admin user -----------------------------------------------------------
+echo "==> step 2/4: admin user"
 ADMIN_JSON="$(api_call GET "/users?search=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$ADMIN_USERNAME")&pagination[limit]=5")"
 sleep "$SLEEP_SECS"
 ADMIN_ID="$(echo "$ADMIN_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((u['id'] for u in d.get('data',[]) if u.get('username')=='$ADMIN_USERNAME'),''))")"
@@ -109,24 +133,6 @@ echo "    $APP_URL/lc/$TOKEN"
 echo "    Open it in the browser that will hold the instructor passkey,"
 echo "    then /settings/account -> Add passkey."
 echo ""
-
-# --- 2. App config -----------------------------------------------------------
-echo "==> step 2/4: app config (signups withToken, no email requirement)"
-CUR="$(api_call GET "/application-configuration/all")"
-sleep "$SLEEP_SECS"
-UPD="$(mktemp)"; trap 'rm -f "$UPD"' EXIT
-echo "$CUR" | python3 -c "
-import json, sys
-cur = {c['key']: c['value'] for c in json.load(sys.stdin)}
-cur['allowUserSignups'] = 'withToken'
-cur['requireUserEmail'] = 'false'
-cur['emailsVerified'] = 'false'
-cur['emailVerificationEnabled'] = 'false'
-json.dump(cur, open('$UPD', 'w'))
-"
-api_call PUT "/application-configuration" "$UPD" >/dev/null
-sleep "$SLEEP_SECS"
-echo "    config updated."
 
 # --- 3. Group + OIDC client ---------------------------------------------------
 echo "==> step 3/4: group 'workshop' + client 'workshop-app'"
@@ -177,11 +183,20 @@ fi
 # --- 4. Signup token ----------------------------------------------------------
 echo "==> step 4/4: signup token"
 USE_LIMIT=$(( (HEADCOUNT * 12 / 10) ))
-TTL_STR="${DAYS}d"
+# Pocket ID caps usageLimit at 100 (signupTokenCreateDto binding max=100).
+if [[ "$USE_LIMIT" -gt 100 ]]; then USE_LIMIT=100; fi
+# Go time.ParseDuration has no day unit — send hours ("24h", "48h", …).
+TTL_STR="$(( DAYS * 24 ))h"
 body="$(mktemp)"; echo "{\"ttl\":\"${TTL_STR}\",\"usageLimit\":$USE_LIMIT,\"userGroupIds\":[\"$GROUP_ID\"]}" >"$body"
 TOKEN_JSON="$(api_call POST "/signup-tokens" "$body")"
 rm -f "$body"; sleep "$SLEEP_SECS"
-SIGNUP_TOKEN="$(echo "$TOKEN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")"
+if ! SIGNUP_TOKEN="$(echo "$TOKEN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")" \
+  || [[ -z "$SIGNUP_TOKEN" ]]; then
+  echo "signup token create failed (empty response is usually a 500 under replica contention" >&2
+  echo "— check whether a token already exists: GET /api/signup-tokens, then retry setup.sh)." >&2
+  echo "raw response: $TOKEN_JSON" >&2
+  exit 1
+fi
 echo ""
 echo "    ATTENDEE SIGNUP (limit $USE_LIMIT uses, expires in $DAYS day(s) — QR this):"
 echo "    $APP_URL/signup?token=$SIGNUP_TOKEN"
