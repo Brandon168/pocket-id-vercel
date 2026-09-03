@@ -15,7 +15,7 @@ Vercel Next.js controller
   - one-minute cron stops it after idle timeout
         |
         v
-one Vercel Sandbox (2 vCPU / 4 GB default)
+one Vercel Sandbox (1 vCPU / 2 GB default)
   - one Pocket ID process (satisfies max-hosts=1)
   - public sandbox route is an internal origin only
         |
@@ -39,8 +39,9 @@ Pocket ID's embedded francis host permits one replica per database. Direct Conta
 | Controller immediate restart after deterministic host cleanup | 200 in 1.77 s |
 | 2-vCPU Sandbox through controller, accidental ~1,300 req/s | Found controller lifecycle-DB connection exhaustion; Pocket ID remained fast. Drove hot-origin caching and activity-write coalescing. |
 | Tuned 2-vCPU controller, bounded 300 rps for 90 s | **26,912 requests, zero failures**, p95 149 ms, max 1.25 s; ~99.7 MB peak cgroup memory of 4 GB (~2.4%) |
+| Tuned 1-vCPU controller, bounded 300 rps for 90 s | **26,899 requests, zero failures**, p95 156 ms, max 1.55 s; ~100.6 MB peak of 2 GB (~4.8%), zero CPU throttling |
 
-The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it was far above the 300-user workshop target, showed no Pocket ID memory/CPU symptom, and isolated per-request controller work as the bottleneck. Hot origins are now cached per Function instance, lifecycle activity writes are coalesced, bodyless 204 responses are handled correctly, and sessions are extended through the idle horizon. The bounded 300-rps rerun passed cleanly with ~97.6% RAM headroom. The default is **2 vCPU / 4 GB**; use 4 vCPU only if a future realistic journey benchmark demonstrates CPU or latency pressure.
+The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it was far above the 300-user workshop target, showed no Pocket ID memory/CPU symptom, and isolated per-request controller work as the bottleneck. Hot origins are cached per Function instance, lifecycle activity writes are coalesced, bodyless 204 responses are handled correctly, and sessions are extended through the idle horizon. Both bounded 300-rps reruns passed cleanly: 2 vCPU peaked around 103 MB; 1 vCPU peaked around 101 MB with no CPU throttling and only 7 ms additional p95 latency. The default is therefore **1 vCPU / 2 GB**, the smallest Sandbox size; use 2 vCPU for extra CPU headroom during unusually write-heavy workshops.
 
 ## Lifecycle
 
@@ -72,7 +73,7 @@ The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it 
 1. Provision Neon. Use one project with two logical databases or two branches:
    - Pocket ID DB → `DATABASE_URL_UNPOOLED`
    - controller state DB → `CONTROLLER_DATABASE_URL`
-2. Deploy once to build `image/Dockerfile` into VCR, then create the named persistent Sandbox from that ready `dockerfile` image with port 1411, **2 vCPU / 4 GB**, `keepLastSnapshots: { count: 1 }`, and at least a 5-minute session timeout.
+2. Deploy once to build `image/Dockerfile` into VCR, then create the named persistent Sandbox from that ready `dockerfile` image with port 1411, **1 vCPU / 2 GB**, `keepLastSnapshots: { count: 1 }`, and at least a 5-minute session timeout.
 3. Configure all variables above in Production. Deployment Protection must be off: OIDC back-channel clients cannot complete Vercel Authentication.
 4. Deploy the Next.js controller (`npm install && vercel deploy --prod`).
 5. Open `https://<project>.vercel.app/login`. First access resumes/starts the Sandbox. Confirm `GET /api/lifecycle/status` reports both lifecycle and Sandbox `running`.
@@ -99,8 +100,7 @@ curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
 # next ordinary request transparently resumes it
 curl https://<project>.vercel.app/login
 ```
-
-A stopped Sandbox does not accrue provisioned-memory cost. A running 2-vCPU Sandbox has 4 GB provisioned memory (~$0.0848/hour in `iad1`) plus active CPU. Default 30-minute idle grace costs at most ~$0.042 after the last auth request. The Vercel controller Function uses Fluid pricing and is idle between requests.
+A stopped Sandbox does not accrue provisioned-memory cost. A running 1-vCPU Sandbox has 2 GB provisioned memory (~$0.0424/hour in `iad1`) plus active CPU. Default 30-minute idle grace costs at most ~$0.021 after the last auth request. The Vercel controller Function uses Fluid pricing and is idle between requests.
 
 ## Teardown
 
