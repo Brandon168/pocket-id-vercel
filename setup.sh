@@ -2,11 +2,12 @@
 # setup.sh — idempotent post-deploy provisioning for a Pocket ID sidecar on Vercel.
 #
 # Usage:
-#   APP_URL=https://<your-sidecar>.vercel.app \
-#   STATIC_API_KEY=<static api key from project env> \
-#   ./setup.sh [--headcount N] [--days N] [--admin-username NAME] [--admin-email EMAIL] [--admin-first-name NAME]
+#   ./setup.sh [--headcount N] [--days N] [--tokens N] [--admin-username NAME] [--admin-email EMAIL] [--admin-first-name NAME]
 #
-# Defaults: headcount 50, workshop length 2 days, admin username "instructor".
+# Defaults: headcount 50, workshop length 2 days, 4 signup tokens, admin username "instructor".
+# Pocket ID caps a single signup token at 100 uses: for headcount > ~80, mint several
+# tokens (--tokens N, default 4 → 400 uses) and QR all of them. setup.sh spreads
+# attendees across N parallel /signup links so no single token's usageLimit caps the rush.
 # Requires: curl, python3. No other dependencies.
 #
 # Contract:
@@ -16,8 +17,9 @@
 #      (passkeys cannot be created via API — the instructor registers theirs in-browser).
 #   3. Group "workshop"; OIDC client "workshop-app" (public, PKCE) with callback
 #      wildcard https://*.vercel.app/api/auth/callback/pocket-id, restricted to "workshop".
-#   4. Signup token: use limit = headcount + 20%, expiry = workshop days, default group
-#      "workshop". Prints the signup link (QR this).
+#   4. Signup tokens: headcount + 20 % headroom spread across --tokens parallel
+#      tokens (each capped at 100 uses), all defaulting to group "workshop".
+#      Print every signup link (QR all of them).
 #   5. CIMD allowlist is NOT set (Pocket ID validates callback patterns at the client;
 #      RPs register via the admin UI or API).
 #
@@ -32,6 +34,7 @@ APP_URL="${APP_URL:?set APP_URL to the sidecar origin, e.g. https://idp-ws-2026-
 STATIC_API_KEY="${STATIC_API_KEY:?set STATIC_API_KEY to the project static API key}"
 HEADCOUNT=50
 DAYS=2
+TOKENS=4
 ADMIN_USERNAME="instructor"
 ADMIN_EMAIL=""
 ADMIN_FIRST_NAME="Instructor"
@@ -41,10 +44,11 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --headcount) HEADCOUNT="$2"; shift 2 ;;
     --days) DAYS="$2"; shift 2 ;;
+    --tokens) TOKENS="$2"; shift 2 ;;
     --admin-username) ADMIN_USERNAME="$2"; shift 2 ;;
     --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
     --admin-first-name) ADMIN_FIRST_NAME="$2"; shift 2 ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
 done
@@ -180,25 +184,36 @@ if [[ "${INSTRUCTOR_NEEDS_GROUP:-0}" == "1" ]]; then
   echo "    instructor added."
 fi
 
-# --- 4. Signup token ----------------------------------------------------------
-echo "==> step 4/4: signup token"
-USE_LIMIT=$(( (HEADCOUNT * 12 / 10) ))
+# --- 4. Signup tokens ---------------------------------------------------------
+# Headroom +20 % spread across $TOKENS parallel tokens (server caps each at 100
+# uses). Parallel links keep a stampede from piling onto one token's counter;
+# attendees split across them (rotate the QR slides, or print one QR per table).
+echo "==> step 4/4: signup tokens (x$TOKENS)"
+TOTAL_NEED=$(( (HEADCOUNT * 12 / 10) ))
+PER_TOKEN=$(( (TOTAL_NEED + TOKENS - 1) / TOKENS ))
 # Pocket ID caps usageLimit at 100 (signupTokenCreateDto binding max=100).
-if [[ "$USE_LIMIT" -gt 100 ]]; then USE_LIMIT=100; fi
+if [[ "$PER_TOKEN" -gt 100 ]]; then
+  echo "    WARNING: headcount $HEADCOUNT needs $TOTAL_NEED uses but $TOKENS tokens x 100 cap = $(( TOKENS * 100 )). Mint more with --tokens." >&2
+  PER_TOKEN=100
+fi
 # Go time.ParseDuration has no day unit — send hours ("24h", "48h", …).
 TTL_STR="$(( DAYS * 24 ))h"
-body="$(mktemp)"; echo "{\"ttl\":\"${TTL_STR}\",\"usageLimit\":$USE_LIMIT,\"userGroupIds\":[\"$GROUP_ID\"]}" >"$body"
-TOKEN_JSON="$(api_call POST "/signup-tokens" "$body")"
-rm -f "$body"; sleep "$SLEEP_SECS"
-if ! SIGNUP_TOKEN="$(echo "$TOKEN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")" \
-  || [[ -z "$SIGNUP_TOKEN" ]]; then
-  echo "signup token create failed (empty response is usually a 500 under replica contention" >&2
-  echo "— check whether a token already exists: GET /api/signup-tokens, then retry setup.sh)." >&2
-  echo "raw response: $TOKEN_JSON" >&2
-  exit 1
-fi
 echo ""
-echo "    ATTENDEE SIGNUP (limit $USE_LIMIT uses, expires in $DAYS day(s) — QR this):"
-echo "    $APP_URL/signup?token=$SIGNUP_TOKEN"
+echo "    ATTENDEE SIGNUP ($TOKENS parallel links, $PER_TOKEN uses each, expires in $DAYS day(s) — QR all of these):"
+i=1
+while [[ "$i" -le "$TOKENS" ]]; do
+  body="$(mktemp)"; echo "{\"ttl\":\"${TTL_STR}\",\"usageLimit\":$PER_TOKEN,\"userGroupIds\":[\"$GROUP_ID\"]}" >"$body"
+  TOKEN_JSON="$(api_call POST "/signup-tokens" "$body")"
+  rm -f "$body"; sleep "$SLEEP_SECS"
+  if ! SIGNUP_TOKEN="$(echo "$TOKEN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")" \
+    || [[ -z "$SIGNUP_TOKEN" ]]; then
+    echo "signup token $i/$TOKENS create failed (empty response is usually a 500 under replica contention" >&2
+    echo "— check whether tokens already exist: GET /api/signup-tokens, then retry setup.sh)." >&2
+    echo "raw response: $TOKEN_JSON" >&2
+    exit 1
+  fi
+  echo "    [$i/$TOKENS] $APP_URL/signup?token=$SIGNUP_TOKEN"
+  i=$(( i + 1 ))
+done
 echo ""
 echo "done."
