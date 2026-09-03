@@ -8,6 +8,10 @@ This is a workshop sidecar: provision it for an event, let it idle to zero, then
 
 ![Pocket ID on Vercel architecture: a stable Next.js controller proxies OIDC traffic to one Vercel Sandbox, with Neon storing identity and lifecycle state.](assets/pocket-id-vercel-architecture.jpg)
 
+> **Tested envelope:** 300 virtual users against Pocket ID directly, plus a constant 300 requests per second through the Fluid compute controller for 90 seconds. Both completed with zero HTTP failures. After the named Sandbox reached `stopped`, the next request resumed it and returned the complete login page in 2.29 seconds. Twenty simultaneous requests during resume returned 20/20 HTTP 200 in 1.32–1.79 seconds through one startup lease.
+
+The wake-up path is a **Vercel Sandbox resume**, not a second Pocket ID replica. The controller Function may incur its own Fluid compute cold start, but every invocation coordinates on the same named Sandbox and Neon-backed lease. These tests prove the request path and resume coordination; they do not yet model 300 simultaneous passkey ceremonies or account-creation writes.
+
 ### Request path
 
 1. Users and OIDC relying-party apps connect only to the controller's stable production hostname.
@@ -25,7 +29,7 @@ The controller removes that race instead of hiding it:
 - **One compute owner.** One named Sandbox runs one Pocket ID process against one identity database.
 - **Stable identity boundary.** `APP_URL`, the OIDC issuer, and the WebAuthn RP ID all use the controller hostname.
 - **Distributed lifecycle coordination.** A separate Neon database stores the Sandbox state and an expiring startup lease. Concurrent cold requests elect one resumer; the rest wait for the same Sandbox.
-- **Transparent scale-to-zero.** A one-minute cron stops and snapshots the Sandbox after the idle threshold. The next ordinary request resumes it and continues within the same HTTP request.
+- **Transparent scale-to-zero behavior.** A one-minute Vercel Cron stops and snapshots the named Sandbox after the idle threshold. The next ordinary request calls the Vercel Sandbox resume path and continues within the original HTTP request.
 - **Deterministic restart.** Graceful shutdown completes before the stopped francis host row is removed, preventing the stale 90-second host slot from blocking restart.
 
 ### Runtime boundaries
@@ -45,8 +49,8 @@ The identity and controller databases must be logically separate. The Sandbox is
 |---|---|
 | Direct Function, 2 VUs | 30–40% 500 (`ErrClusterFull`) |
 | Direct 4-vCPU Sandbox, 300 VUs / 271,336 reads | 0 failures, p95 206 ms, max 1.5 s |
-| Controller cold GET after stopped Sandbox | 200 with complete 5,375-byte page in 1.62–2.33 s |
-| 20 simultaneous cold GETs | 20/20 HTTP 200, 1.32–1.79 s, one leased resume |
+| Vercel Sandbox resume after `stopped` | HTTP 200 with the complete 5,375-byte login page in 1.62–2.33 s; latest measured resume was 2.29 s |
+| 20 simultaneous requests during Sandbox resume | 20/20 HTTP 200 in 1.32–1.79 s through one Neon-backed startup lease |
 | Controller stop | 15–16 s including Pocket ID's 10-second actor shutdown grace and snapshot |
 | Controller immediate restart after deterministic host cleanup | 200 in 1.77 s |
 | 2-vCPU Sandbox through controller, accidental ~1,300 req/s | Found controller lifecycle-DB connection exhaustion; Pocket ID remained fast. Drove hot-origin caching and activity-write coalescing. |
@@ -57,10 +61,11 @@ The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it 
 
 ## Lifecycle
 
-- `SANDBOX_IDLE_MINUTES` defaults to 30. A minute cron stops the Sandbox after no proxied request for that interval.
-- Any request extends the active session to at least `idle + 5 minutes`, avoiding a timeout during an auth flow.
-- Stop sends SIGTERM, waits 12 seconds for Pocket ID/francis, removes the stopped host's database row, then snapshots/stops the VM. This deterministic cleanup is required because francis otherwise retains the single-host slot for 90 seconds.
-- Next request resumes the named Sandbox, writes current env into `/tmp/pocket-env.sh`, starts Pocket ID, waits for `/healthz`, then proxies the original request.
+- `SANDBOX_IDLE_MINUTES` defaults to 30. A one-minute Vercel Cron stops the Sandbox after no proxied request for that interval.
+- Any request extends the Sandbox session timeout to at least `idle + 5 minutes`, avoiding expiry during an auth flow.
+- Stop sends SIGTERM, waits 12 seconds for Pocket ID/francis, removes the stopped host's database row, then snapshots and stops the Sandbox. This deterministic cleanup is required because francis otherwise retains the single-host slot for 90 seconds.
+- The next request acquires the Neon-backed startup lease, calls Vercel Sandbox resume, writes current env into `/tmp/pocket-env.sh`, starts Pocket ID, waits for `/healthz`, then proxies the original request.
+- Concurrent resume requests wait on that distributed lease and reuse the same Sandbox origin. Fluid compute can execute controller invocations concurrently without starting a second Pocket ID process.
 - State and startup leases live in `CONTROLLER_DATABASE_URL`, not process memory. The controller DB must be separate from Pocket ID's database.
 - The controller hostname is Pocket ID's `APP_URL`, OIDC issuer, and WebAuthn RP ID. Users never see `sb-*.vercel.run`.
 
