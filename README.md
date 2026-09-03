@@ -83,9 +83,9 @@ The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it 
 | `WORKSHOP_ADMIN_SECRET` | yes | Password for the instructor console at `/workshop`. |
 | `APP_URL` | no | Exact controller origin. Omit for the standard `.vercel.app` project URL. |
 | `SANDBOX_NAME` | no | Defaults to `pocket-id` within the deployed Vercel project. |
-| `SANDBOX_IMAGE` | no | Public Pocket ID VCR image; defaults to the template image. |
+| `SANDBOX_IMAGE` | no | Optional custom VCR image. By default, first startup downloads and checksum-verifies Pocket ID v2.14.0 in a persistent Vercel-managed Sandbox. |
 | `SANDBOX_IDLE_MINUTES` | no | Wizard default 120 for long workshop pauses. |
-| `SANDBOX_STARTUP_TIMEOUT_MS` | no | Default 30,000. |
+| `SANDBOX_STARTUP_TIMEOUT_MS` | no | Default 60,000. |
 | `DISABLE_RATE_LIMITING` | no | Wizard default `true` for conference NAT. |
 | `LIFECYCLE_ADMIN_SECRET` | no | Only required for manual `POST /api/lifecycle/stop`. |
 | `CRON_SECRET` | recommended | Vercel supplies this bearer value to cron calls. |
@@ -94,7 +94,7 @@ The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it 
 
 1. Click **Deploy with Vercel** above and choose a project/repository name.
 2. In the wizard, create the Neon store and enter three random values: `ENCRYPTION_KEY`, `STATIC_API_KEY`, and `WORKSHOP_ADMIN_SECRET`. Leave the two defaults unchanged.
-3. Wait for the deployment to become Ready. The first workshop request creates the named persistent Sandbox from the public Pocket ID image automatically.
+3. Wait for the deployment to become Ready. The first workshop request creates the named persistent Sandbox and downloads the pinned Pocket ID binary automatically.
 4. Deployment Protection must remain off because OIDC back-channel clients cannot complete Vercel Authentication.
 5. Open `https://<project>.vercel.app/workshop` and enter `WORKSHOP_ADMIN_SECRET` when the browser prompts.
 6. Click **Prepare workshop**. No configuration questions: it creates the instructor admin, workshop group, fixed public PKCE client, and ten 100-use signup pools valid for three days.

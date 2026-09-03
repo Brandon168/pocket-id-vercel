@@ -13,8 +13,8 @@ import {
 
 const sandboxName = process.env.SANDBOX_NAME ?? 'pocket-id';
 const sandboxPort = 1411;
-const sandboxImage = process.env.SANDBOX_IMAGE ?? 'brandon-vtest314/pocket-id-vercel-test-deploy/pocket-id:latest';
-const startupTimeoutMs = Number(process.env.SANDBOX_STARTUP_TIMEOUT_MS ?? 30_000);
+const sandboxImage = process.env.SANDBOX_IMAGE ?? 'vercel/sandbox/universal:latest';
+const startupTimeoutMs = Number(process.env.SANDBOX_STARTUP_TIMEOUT_MS ?? 60_000);
 let knownOrigin: string | null = null;
 let knownOriginUntil = 0;
 let lastActivityTouchAt = 0;
@@ -60,9 +60,11 @@ function pocketEnvironment(origin: string): string {
     if (!value) throw new Error(`${name} is required`);
     values[name] = value;
   }
+  const productionOrigin = process.env.APP_URL
+    ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : origin);
   Object.assign(values, {
     DB_CONNECTION_STRING: values.DATABASE_URL_UNPOOLED,
-    APP_URL: process.env.APP_URL ?? origin,
+    APP_URL: productionOrigin,
     APP_ENV: 'production',
     PORT: String(sandboxPort),
     ACTORS_HOST: '127.0.0.1',
@@ -93,7 +95,7 @@ async function startPocketId(sandbox: Sandbox, origin: string): Promise<void> {
   if ((await processCount.stdout()).trim() === '0') {
     await sandbox.runCommand({
       cmd: 'sh',
-      args: ['-lc', '. /tmp/pocket-env.sh && exec /app/pocket-id >>/tmp/pocket-id.log 2>&1'],
+      args: ['-lc', '. /tmp/pocket-env.sh && exec "$(command -v /app/pocket-id 2>/dev/null || echo /tmp/pocket-id)" >>/tmp/pocket-id.log 2>&1'],
       detached: true,
     });
   }
@@ -129,6 +131,14 @@ async function resumeAsLeaseOwner(owner: string): Promise<string> {
     resources: { vcpus: 1 },
     persistent: true,
     keepLastSnapshots: { count: 1 },
+    onCreate: async (created) => {
+      if (sandboxImage !== 'vercel/sandbox/universal:latest') return;
+      const download = await created.runCommand('sh', [
+        '-lc',
+        'curl -fsSL https://github.com/pocket-id/pocket-id/releases/download/v2.14.0/pocket-id_linux_amd64 -o /tmp/pocket-id && echo "da32b4e7bc8ba817ae2cee6e62634834bf234965fa237d25ab38fc3bec58ef48  /tmp/pocket-id" | sha256sum -c - && chmod 700 /tmp/pocket-id',
+      ]);
+      if (download.exitCode !== 0) throw new Error(`Pocket ID download failed: ${await download.stderr()}`);
+    },
     resume: true,
   });
   const origin = `https://${new URL(sandbox.domain(sandboxPort)).host}`;
