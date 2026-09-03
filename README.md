@@ -1,31 +1,43 @@
 # Pocket ID on Vercel — workshop sidecar
 
-Passkey-only OIDC provider ([Pocket ID](https://github.com/pocket-id/pocket-id), Go + embedded SvelteKit SPA), unchanged upstream.
+Run the upstream [Pocket ID](https://github.com/pocket-id/pocket-id) passkey-only OIDC provider on Vercel without changing its Go backend or embedded SvelteKit frontend. A thin Next.js controller gives browsers and relying-party apps one stable origin while a single persistent Vercel Sandbox satisfies Pocket ID's single-replica constraint.
+
+This is a workshop sidecar: provision it for an event, let it idle to zero, then remove the Sandbox, identity database, and controller state.
 
 ## Architecture
 
-```text
-browser / RP (stable project hostname)
-        |
-        v
-Vercel Next.js controller
-  - proxies every request
-  - Neon-backed lifecycle lease
-  - resumes one persistent Sandbox on demand
-  - one-minute cron stops it after idle timeout
-        |
-        v
-one Vercel Sandbox (1 vCPU / 2 GB default)
-  - one Pocket ID process (satisfies max-hosts=1)
-  - public sandbox route is an internal origin only
-        |
-        v
-Neon Postgres
-  - Pocket ID identity data
-  - separate logical DB for controller lifecycle state
-```
+![Pocket ID on Vercel architecture: a stable Next.js controller proxies OIDC traffic to one Vercel Sandbox, with Neon storing identity and lifecycle state.](assets/pocket-id-vercel-architecture.jpg)
 
-Pocket ID's embedded francis host permits one replica per database. Direct Container Images Functions scale out on overlap, so newcomers crash with `ErrClusterFull`. The controller keeps Pocket ID in exactly one Sandbox, gives users a stable `.vercel.app` origin, and makes the stopped state transparent: the cold request waits while the Sandbox resumes.
+### Request path
+
+1. Users and OIDC relying-party apps connect only to the controller's stable production hostname.
+2. The Next.js catch-all route resolves or resumes the named Sandbox, waits for `/healthz`, and proxies the original request.
+3. Exactly one Pocket ID process serves the SPA, WebAuthn ceremonies, OIDC endpoints, and API from the Sandbox.
+4. Pocket ID reads and writes identity data in Neon through the unpooled Postgres connection.
+5. The controller rewrites upstream redirects back to the stable hostname. The `sb-*.vercel.run` origin remains internal.
+
+### Why the controller exists
+
+Pocket ID embeds a francis actor host configured for one host per database. Direct Container Images Functions can overlap during scale-out or deployment. The second process then fails with `ErrClusterFull`.
+
+The controller removes that race instead of hiding it:
+
+- **One compute owner.** One named Sandbox runs one Pocket ID process against one identity database.
+- **Stable identity boundary.** `APP_URL`, the OIDC issuer, and the WebAuthn RP ID all use the controller hostname.
+- **Distributed lifecycle coordination.** A separate Neon database stores the Sandbox state and an expiring startup lease. Concurrent cold requests elect one resumer; the rest wait for the same Sandbox.
+- **Transparent scale-to-zero.** A one-minute cron stops and snapshots the Sandbox after the idle threshold. The next ordinary request resumes it and continues within the same HTTP request.
+- **Deterministic restart.** Graceful shutdown completes before the stopped francis host row is removed, preventing the stale 90-second host slot from blocking restart.
+
+### Runtime boundaries
+
+| Boundary | Responsibility | Persistent state |
+|---|---|---|
+| Next.js controller on Fluid compute | Public reverse proxy, startup lease, health wait, redirect rewriting, idle control | None in process memory |
+| Named Vercel Sandbox, 1 vCPU / 2 GB | One unchanged Pocket ID v2.14.0 process | One retained Sandbox snapshot |
+| Pocket ID Neon database | Users, passkeys, groups, OIDC clients, files, and francis actor state | Durable Postgres data |
+| Controller Neon database | Lifecycle status, last request time, startup lease, origin, and errors | Durable Postgres data |
+
+The identity and controller databases must be logically separate. The Sandbox is the only Pocket ID compute replica; the Fluid controller can scale independently because its coordination state lives in Neon.
 
 ## Measured behavior (2026-09-03)
 
