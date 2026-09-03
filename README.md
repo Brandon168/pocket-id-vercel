@@ -10,9 +10,9 @@ This is a workshop sidecar: provision it for an event, let it idle to zero, then
 
 ![Pocket ID on Vercel architecture: a stable Next.js controller proxies OIDC traffic to one Vercel Sandbox, with Neon storing identity and lifecycle state.](assets/pocket-id-vercel-architecture.jpg)
 
-> **Tested envelope:** 300 virtual users against Pocket ID directly, plus a constant 300 requests per second through the Fluid compute controller for 90 seconds. Both completed with zero HTTP failures. After the named Sandbox reached `stopped`, the next request resumed it and returned the complete login page in 2.29 seconds. Twenty simultaneous requests during resume returned 20/20 HTTP 200 in 1.32–1.79 seconds through one startup lease.
+> **Validation status:** The controller architecture was load-tested before the Deploy Button flow was added. The current template changes first boot, database layout, and workshop provisioning, so the earlier timing and throughput numbers do not describe this exact path. Run the wizard end to end before using it for a workshop.
 
-The wake-up path is a **Vercel Sandbox resume**, not a second Pocket ID replica. The controller Function may incur its own Fluid compute cold start, but every invocation coordinates on the same named Sandbox and Neon-backed lease. These tests prove the request path and resume coordination; they do not yet model 300 simultaneous passkey ceremonies or account-creation writes.
+The wake-up path resumes one named Vercel Sandbox. On its first start, the controller downloads the pinned Pocket ID v2.14.0 Linux binary and verifies its SHA-256 checksum. Later starts restore the persistent Sandbox filesystem. Every controller invocation coordinates through a Neon-backed lease before starting Pocket ID.
 
 ### Request path
 
@@ -30,7 +30,7 @@ The controller removes that race instead of hiding it:
 
 - **One compute owner.** One named Sandbox runs one Pocket ID process against one identity database.
 - **Stable identity boundary.** `APP_URL`, the OIDC issuer, and the WebAuthn RP ID all use the controller hostname.
-- **Distributed lifecycle coordination.** A separate Neon database stores the Sandbox state and an expiring startup lease. Concurrent cold requests elect one resumer; the rest wait for the same Sandbox.
+- **Distributed lifecycle coordination.** Neon stores the Sandbox state and an expiring startup lease. Concurrent cold requests elect one starter; the rest wait for the same Sandbox.
 - **Transparent scale-to-zero behavior.** A one-minute Vercel Cron stops and snapshots the named Sandbox after the idle threshold. The next ordinary request calls the Vercel Sandbox resume path and continues within the original HTTP request.
 - **Deterministic restart.** Graceful shutdown completes before the stopped francis host row is removed, preventing the stale 90-second host slot from blocking restart.
 
@@ -39,37 +39,26 @@ The controller removes that race instead of hiding it:
 | Boundary | Responsibility | Persistent state |
 |---|---|---|
 | Next.js controller on Fluid compute | Public reverse proxy, startup lease, health wait, redirect rewriting, idle control | None in process memory |
-| Named Vercel Sandbox, 1 vCPU / 2 GB | One unchanged Pocket ID v2.14.0 process | One retained Sandbox snapshot |
-| Pocket ID Neon database | Users, passkeys, groups, OIDC clients, files, and francis actor state | Durable Postgres data |
-| Controller Neon database | Lifecycle status, last request time, startup lease, origin, and errors | Durable Postgres data |
+| Named Vercel Sandbox, 1 vCPU / 2 GB | One upstream Pocket ID v2.14.0 process | Persistent Sandbox filesystem with one retained snapshot |
+| Neon Postgres | Pocket ID identity data, controller lifecycle state, and workshop setup | Durable Postgres data |
 
-The identity and controller databases must be logically separate. The Sandbox is the only Pocket ID compute replica; the Fluid controller can scale independently because its coordination state lives in Neon.
+The Deploy Button uses one Neon store for both Pocket ID and controller tables to minimize workshop setup. Set `CONTROLLER_DATABASE_URL` only when you want the controller tables in a separate database.
 
-## Measured behavior (2026-09-03)
+## Validation status
 
-| Test | Result |
-|---|---|
-| Direct Function, 2 VUs | 30–40% 500 (`ErrClusterFull`) |
-| Direct 4-vCPU Sandbox, 300 VUs / 271,336 reads | 0 failures, p95 206 ms, max 1.5 s |
-| Vercel Sandbox resume after `stopped` | HTTP 200 with the complete 5,375-byte login page in 1.62–2.33 s; latest measured resume was 2.29 s |
-| 20 simultaneous requests during Sandbox resume | 20/20 HTTP 200 in 1.32–1.79 s through one Neon-backed startup lease |
-| Controller stop | 15–16 s including Pocket ID's 10-second actor shutdown grace and snapshot |
-| Controller immediate restart after deterministic host cleanup | 200 in 1.77 s |
-| 2-vCPU Sandbox through controller, accidental ~1,300 req/s | Found controller lifecycle-DB connection exhaustion; Pocket ID remained fast. Drove hot-origin caching and activity-write coalescing. |
-| Tuned 2-vCPU controller, bounded 300 rps for 90 s | **26,912 requests, zero failures**, p95 149 ms, max 1.25 s; ~99.7 MB peak cgroup memory of 4 GB (~2.4%) |
-| Tuned 1-vCPU controller, bounded 300 rps for 90 s | **26,899 requests, zero failures**, p95 156 ms, max 1.55 s; ~100.6 MB peak of 2 GB (~4.8%), zero CPU throttling |
+The single-Sandbox controller, lifecycle lease, proxy, graceful stop, and restart behavior were tested in the predecessor implementation. The current Deploy Button path has not yet completed a fresh end-to-end run. In particular, first-boot binary download, the shared Neon database layout, instructor-console provisioning, QR signup, and cleanup still need validation together.
 
-The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it was far above the 300-user workshop target, showed no Pocket ID memory/CPU symptom, and isolated per-request controller work as the bottleneck. Hot origins are cached per Function instance, lifecycle activity writes are coalesced, bodyless 204 responses are handled correctly, and sessions are extended through the idle horizon. Both bounded 300-rps reruns passed cleanly: 2 vCPU peaked around 103 MB; 1 vCPU peaked around 101 MB with no CPU throttling and only 7 ms additional p95 latency. The default is therefore **1 vCPU / 2 GB**, the smallest Sandbox size; use 2 vCPU for extra CPU headroom during unusually write-heavy workshops.
+Treat the current template as workshop infrastructure under test until that run passes. No throughput or startup-time claim from the predecessor implementation is carried forward.
 
 ## Lifecycle
 
-- `SANDBOX_IDLE_MINUTES` defaults to 30. A one-minute Vercel Cron stops the Sandbox after no proxied request for that interval.
-- Any request extends the Sandbox session timeout to at least `idle + 5 minutes`, avoiding expiry during an auth flow.
-- Stop sends SIGTERM, waits 12 seconds for Pocket ID/francis, removes the stopped host's database row, then snapshots and stops the Sandbox. This deterministic cleanup is required because francis otherwise retains the single-host slot for 90 seconds.
-- The next request acquires the Neon-backed startup lease, calls Vercel Sandbox resume, writes current env into `/tmp/pocket-env.sh`, starts Pocket ID, waits for `/healthz`, then proxies the original request.
-- Concurrent resume requests wait on that distributed lease and reuse the same Sandbox origin. Fluid compute can execute controller invocations concurrently without starting a second Pocket ID process.
-- State and startup leases live in `CONTROLLER_DATABASE_URL`, not process memory. The controller DB must be separate from Pocket ID's database.
-- The controller hostname is Pocket ID's `APP_URL`, OIDC issuer, and WebAuthn RP ID. Users never see `sb-*.vercel.run`.
+- `SANDBOX_IDLE_MINUTES` defaults to 30 in code. The Deploy Button sets it to 120 for workshop pauses.
+- The controller creates the Sandbox with a session timeout of `idle + 5 minutes` and extends that timeout when resuming a session near expiry.
+- Stop sends SIGTERM, waits 12 seconds for Pocket ID and francis, removes the stopped host's database row, then stops the persistent Sandbox. This cleanup prevents the stale 90-second host slot from blocking restart.
+- The next request acquires the Neon-backed startup lease, creates or resumes the named Sandbox, writes current environment variables into `/tmp/pocket-env.sh`, starts Pocket ID, waits for `/healthz`, and proxies the original request.
+- Concurrent startup requests wait on that distributed lease and reuse the same Sandbox origin. Fluid compute can run controller invocations concurrently without starting a second Pocket ID process.
+- Lifecycle state uses `CONTROLLER_DATABASE_URL` when set and otherwise uses the Neon-provided `DATABASE_URL`.
+- The controller hostname is Pocket ID's `APP_URL`, OIDC issuer, and WebAuthn RP ID. Users never see the `sb-*.vercel.run` origin.
 
 ## Environment variables
 
@@ -92,13 +81,13 @@ The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it 
 
 ## Deploy
 
-1. Click **Deploy with Vercel** above and choose a project/repository name.
+1. Click **Deploy with Vercel** above and choose a project and repository name. Use Pro or Enterprise: the one-minute idle cron does not deploy on Hobby, and Hobby Sandbox sessions cannot exceed 45 minutes.
 2. In the wizard, create the Neon store and enter three random values: `ENCRYPTION_KEY`, `STATIC_API_KEY`, and `WORKSHOP_ADMIN_SECRET`. Leave the two defaults unchanged.
 3. Wait for the deployment to become Ready. The first workshop request creates the named persistent Sandbox and downloads the pinned Pocket ID binary automatically.
-4. Deployment Protection must remain off because OIDC back-channel clients cannot complete Vercel Authentication.
-5. Open `https://<project>.vercel.app/workshop` and enter `WORKSHOP_ADMIN_SECRET` when the browser prompts.
-6. Click **Prepare workshop**. No configuration questions: it creates the instructor admin, workshop group, fixed public PKCE client, and ten 100-use signup pools valid for three days.
-7. Put the displayed QR code or `/join` URL on the workshop slide. The stable link distributes up to 1,000 attendees across the signup pools.
+4. Turn off Deployment Protection for the production deployment. OIDC back-channel clients cannot complete Vercel Authentication.
+5. Open `https://<project>.vercel.app/workshop`. Enter any username and use `WORKSHOP_ADMIN_SECRET` as the password in the browser prompt.
+6. Click **Prepare workshop**. It creates the instructor admin, workshop group, fixed public PKCE client, and ten 100-use signup tokens valid for three days.
+7. Put the displayed QR code or `/join` URL on the workshop slide. The stable link distributes requests across signup tokens with a combined limit of 1,000 completed signups.
 8. Open the displayed one-time admin login in the instructor browser, add a passkey under **Settings → Account**, then use **Settings → Administration** for Pocket ID's built-in admin tools.
 
 `setup.sh` remains available for custom headcounts, durations, usernames, or client settings; the default workshop path needs no shell.
@@ -109,24 +98,24 @@ The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it 
 # inspect without waking the Sandbox
 curl https://<project>.vercel.app/api/lifecycle/status
 
-# manual graceful stop
+# manual graceful stop (only when LIFECYCLE_ADMIN_SECRET is configured)
 curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
   -H "Authorization: Bearer $LIFECYCLE_ADMIN_SECRET"
 
 # next ordinary request transparently resumes it
 curl https://<project>.vercel.app/login
 ```
-A stopped Sandbox does not accrue provisioned-memory cost. A running 1-vCPU Sandbox has 2 GB provisioned memory (~$0.0424/hour in `iad1`) plus active CPU. Default 30-minute idle grace costs at most ~$0.021 after the last auth request. The Vercel controller Function uses Fluid pricing and is idle between requests.
 
 ## Teardown
 
-Delete all three durable resources:
+A stopped Sandbox does not accrue provisioned-memory usage, but its retained snapshot uses snapshot storage. The Deploy Button's 120-minute idle setting requires Pro or Enterprise and keeps the Sandbox available through workshop pauses; lower it after testing if shorter pauses are acceptable. Vercel Functions run the controller only when requests or the idle cron execute.
 
-1. Named Sandbox and its snapshots.
-2. Pocket ID Neon database (attendee PII).
-3. Controller state database/project.
+Delete both workshop resources after the event:
 
-`teardown.sh` remains for the older direct-Function project shape. Marketplace resources do not disappear with project deletion.
+1. The Vercel project, including its named Sandbox and snapshots.
+2. The Neon Marketplace resource, which contains attendee identity data and controller state.
+
+Run `teardown.sh` to remove the Neon resource and project. Marketplace resources do not disappear when you delete only the Vercel project.
 
 ## Files
 
@@ -137,6 +126,6 @@ Delete all three durable resources:
 - `lib/workshop{,-store,-auth}.ts` — provisioning, controller-DB persistence, and instructor access checks.
 - `lib/lifecycle-store.ts` — Neon state and expiring distributed lifecycle lease.
 - `lib/sandbox-control.ts` — resume/start/readiness/session-extension/graceful-stop state machine.
-- `image/Dockerfile` — Pocket ID v2.14.0 upstream OCI image, no upstream code changes.
-- `setup.sh` — idempotent Pocket ID provisioning and parallel signup tokens.
-- `sandbox-up.mjs`, `sandbox-down.mjs` — manual bootstrap/debug helpers.
+- `image/Dockerfile` — optional custom VCR image source for Pocket ID v2.14.0; the Deploy Button path does not use it by default.
+- `setup.sh` — optional CLI provisioner for custom workshop settings.
+- `sandbox-up.mjs`, `sandbox-down.mjs` — optional manual Sandbox helpers; the Deploy Button path creates the Sandbox on demand.
