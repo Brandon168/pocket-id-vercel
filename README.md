@@ -1,165 +1,123 @@
-# Pocket ID on Vercel — workshop sidecar template
+# Pocket ID on Vercel — workshop sidecar
 
-Passkey-only OIDC provider ([Pocket ID](https://github.com/pocket-id/pocket-id), Go + embedded SvelteKit SPA).
-Zero code changes to upstream.
+Passkey-only OIDC provider ([Pocket ID](https://github.com/pocket-id/pocket-id), Go + embedded SvelteKit SPA), unchanged upstream.
 
-**Default for workshops: run it as a single-process [Vercel Sandbox](https://vercel.com/docs/sandbox)
-microVM** (`sandbox-up.mjs`), not as a Fluid Function. Pocket ID embeds a single-replica actor
-host (max 1 host per database): on Functions, any 2 overlapping requests start a second instance
-that crash-loops and 500s. A Sandbox runs exactly one `pocket-id` process — measured **300
-concurrent VUs, zero 5xx, p95 ~205 ms** (4 vCPU). The Function path (`Dockerfile.vercel`) is kept
-for small/low-concurrency use; see "Function path" below.
+## Architecture
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel&project-name=idp-ws-DATE-TOPIC&env=PORT%2CDISABLE_RATE_LIMITING&envDefaults=%7B%22PORT%22%3A%221411%22%2C%22DISABLE_RATE_LIMITING%22%3A%22true%22%7D&envDescription=PORT%20must%20be%201411%20(the%20container%20listens%20there)%3B%20rate%20limiting%20is%20off%20because%20conference%20NAT%20shares%20one%20IP.&envLink=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel%23env-vars&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D)
+```text
+browser / RP (stable project hostname)
+        |
+        v
+Vercel Next.js controller
+  - proxies every request
+  - Neon-backed lifecycle lease
+  - resumes one persistent Sandbox on demand
+  - restarts Pocket ID and waits for /healthz
+  - one-minute cron stops it after idle timeout
+        |
+        v
+one Vercel Sandbox (2 vCPU / 4 GB tested)
+  - one Pocket ID process (satisfies max-hosts=1)
+  - public sandbox route is an internal origin only
+        |
+        v
+Neon Postgres
+  - Pocket ID identity data
+  - separate logical DB for controller lifecycle state
+```
 
-## Click path — Sandbox (recommended, ~20 min, handles 300 concurrent)
+Pocket ID's embedded francis host permits one replica per database. Direct Container Images Functions scale out on overlap, so newcomers crash with `ErrClusterFull`. The controller keeps Pocket ID in exactly one Sandbox, gives users a stable `.vercel.app` origin, and makes the stopped state transparent: the cold request waits while the Sandbox resumes.
 
-Prereqs: Node 22+, `npm i @vercel/sandbox`, `vercel` CLI logged in, and a **fresh**
-Postgres database (new Neon DB/branch — never reuse one whose keys were encrypted with a
-different `ENCRYPTION_KEY`, or boot fails decrypting the JWT key).
-
-1. **Boot the sandbox** (4 vCPU held 300 VUs at p95 ~205 ms; 8 h default session, Pro max 24 h):
-   ```bash
-   DB_CONNECTION_STRING='postgresql://…' \
-   ENCRYPTION_KEY="$(openssl rand -base64 32)" \
-   STATIC_API_KEY="$(openssl rand -hex 32)" \
-   node sandbox-up.mjs --name idp-ws-2026-09-12-oidc --vcpus 4 --timeout 8h
-   ```
-   Save the printed `APP_URL` (stable for the sandbox's life, across stop/resume — but a
-   *new* sandbox gets a *new* URL, and passkeys bind to the hostname, so keep the name).
-   Save both keys in a password manager now — they are unrecoverable.
-2. **Provision the workshop** (same `setup.sh` as the Function path):
-   ```bash
-   APP_URL=https://<sandbox-domain> \
-   STATIC_API_KEY=<the key from step 1> \
-   ./setup.sh --headcount 300 --tokens 4 --days 2
-   ```
-   Pocket ID caps one signup token at 100 uses: `--tokens 4` mints 4 parallel links
-   (400 uses). QR **all** of them — one per table, or rotate the slides — so the rush
-   spreads across token counters. Prints the instructor Login Code link too (valid ~15 min).
-3. **Before the session**, open the URL once. No 5-min idle dance: the process is already running.
-   Register your instructor passkey (`/settings/account` → Add passkey) **before** attendees arrive —
-   `APP_URL` must be final first (WebAuthn RP ID = hostname).
-
-## Click path — Function (small groups only, ≤ ~10 concurrent)
-
-One-click Deploy Button + Neon `stores` integration, same as before. Fine for demos and small
-rooms. **Do not use for 50+ simultaneous registrations**: any overlap 500s (see "Why Sandbox").
-Steps are identical to the Sandbox path after deploy, with `APP_URL=https://<project>.vercel.app`:
-1. **Click Deploy.** Name the project `idp-ws-<date>-<topic>` (e.g. `idp-ws-2026-09-12-oidc`).
-   When prompted for env vars, fill in:
-   - `ENCRYPTION_KEY` — generate locally: `openssl rand -base64 32`. **Stable per instance,
-     unrecoverable if lost.** Save it in a password manager now.
-   - `STATIC_API_KEY` — any random string ≥16 chars: `openssl rand -hex 32`. Save it too.
-   - `PORT` (default `1411`) and `DISABLE_RATE_LIMITING` (default `true`) are pre-filled — leave them.
-   - You will also be asked to create a **Neon Postgres** database (via the `stores` integration).
-     When Neon shows an **Auth** toggle during setup, turn it **off** — Pocket ID is itself the
-     auth system and never uses Neon's Managed Better Auth tables.
-2. **Wait for the first production deployment to go Ready**, then idle ~5 min (the embedded actor
-   host needs a quiet window to elect itself on first boot).
-3. **Provision the workshop** (needs `curl`, `python3` — clone this repo or download `setup.sh`):
-   ```bash
-   APP_URL=https://idp-ws-2026-09-12-oidc.vercel.app \
-   STATIC_API_KEY=<the key from step 1> \
-   ./setup.sh --headcount 60 --days 2
-   ```
-   This creates the instructor admin, prints a one-time **Login Code link** (valid ~15 min —
-   open it in the browser that will hold your passkey, then `/settings/account` → Add passkey),
-   locks signups to token-only, creates group `workshop` + public PKCE client `workshop-app`
-   (callback `https://*.vercel.app/api/auth/callback/pocket-id`, restricted to `workshop`),
-   and prints the **attendee signup link** — QR this.
-4. **Five minutes before the session**, open the URL once (cold start is the first participant's
-   problem otherwise — ~7 s in-container boot, ~2.6 s cold `/login` after 5-min idle).
-
-## During the workshop (Sandbox)
-
-- **No stagger needed.** One process serves everyone: measured 300 concurrent VUs, zero 5xx,
-  p50 ~119 ms / p95 ~204 ms / max 1.3 s on 4 vCPU. All responses under the 3 s budget.
-- **Never stop/remove the sandbox mid-session** — the process holds everything; resume is fast
-  but drops in-flight requests. Session timeout counts from boot: `vercel sandbox list` shows
-  expiry; extend with the SDK (`sandbox.extendTimeout`) or stop/resume before it lapses.
-- If the page ever fails: check the process is alive (`sandbox exec <name> -- ps aux | grep pocket-id`);
-  if dead, re-run the detached start (same `/tmp/pocket-env.sh`) — the DB holds all state.
-
-## During the workshop (Function path — small groups)
-
-- **One thing at a time.** Overlapping requests start a second instance that crash-loops with
-  `already one instance running`, and routed requests 500 for ~5 min. Serial traffic with ≥1 s
-  gaps is fine; bursts (QR-scan stampedes included) are not — stagger registration.
-- **Never deploy during the session.** A production deploy 500s until the old holder scales in.
-- If `/login` 500s: stop all traffic, wait 5 min idle, retry once. Still 500 → check
-  `vercel logs` for `already one instance running` (contention — keep waiting) vs a real app error.
-
-## Why Sandbox (measurements, 2026-09-03)
+## Measured behavior (2026-09-03)
 
 | Test | Result |
 |---|---|
-| Function, serial ≥1 s gaps | 100% clean (18/18 + 6/6) |
-| Function, 0.5 s gaps | alternating 204/500 — every other request hits a newcomer |
-| Function, 2 VUs | 30–40% failed (`ErrClusterFull` crash-loops) |
-| Function, ramp 1→25 VUs, 3,383 reqs | 84% ok / 16% 500, 30 crash-loops, full recovery after ~5–8 min idle |
-| Sandbox, reads 1→300 VUs, 271,336 reqs | **100% ok, 0 failed**, p50 119 ms / p95 206 ms / max 1.5 s |
-| Sandbox, registrations 300 VUs vs 4× limit-100 tokens | **all 400 token uses consumed, zero 5xx**, every check under 3 s |
-| Sandbox, fork from golden snapshot | boots UP in ≤5 s, identical behavior (400/400 consumed, zero 5xx) |
+| Direct Function, 2 VUs | 30–40% 500 (`ErrClusterFull`) |
+| Direct 4-vCPU Sandbox, 300 VUs / 271,336 reads | 0 failures, p95 206 ms, max 1.5 s |
+| Controller cold GET after stopped Sandbox | 200 with complete 5,375-byte page in 1.62–2.33 s |
+| 20 simultaneous cold GETs | 20/20 HTTP 200, 1.32–1.79 s, one leased resume |
+| Controller stop | 15–16 s including Pocket ID's 10-second actor shutdown grace and snapshot |
+| Controller immediate restart after deterministic host cleanup | 200 in 1.77 s |
+| 2-vCPU Sandbox through controller, 300-VU synthetic 1,300 req/s | Controller/Neon lifecycle state exhausted DB connections; not representative of the workshop and not accepted as a capacity pass |
 
-Pocket ID caps one signup token at 100 uses (`signupTokenCreateDto` binding max). For 300
-attendees, `setup.sh --tokens 4` (default) mints 4 parallel links. Failure mode seen in testing:
-~1,300 req/s against an exhausted token returns clean 401s (`token_invalid_or_expired`) — no 5xx,
-no state damage. Keep one spare token un-QR'd for latecomers.
+The last row found a controller bottleneck, not Pocket ID memory pressure. `touchActivity` is now coalesced to one lifecycle write/minute. Still, only the 4-vCPU direct Sandbox has a clean 300-VU capacity proof. Keep **4 vCPU / 8 GB** as the safe workshop default until the real 300-user journey passes through the controller at 2 vCPU.
 
-## Teardown (same day)
+## Lifecycle
 
-Sandbox path — delete the sandbox **and** drop the workshop database (attendee PII lives in both
-the DB and the sandbox's filesystem snapshot):
+- `SANDBOX_IDLE_MINUTES` defaults to 30. A minute cron stops the Sandbox after no proxied request for that interval.
+- Any request extends the active session to at least `idle + 5 minutes`, avoiding a timeout during an auth flow.
+- Stop sends SIGTERM, waits 12 seconds for Pocket ID/francis, removes the stopped host's database row, then snapshots/stops the VM. This deterministic cleanup is required because francis otherwise retains the single-host slot for 90 seconds.
+- Next request resumes the named Sandbox, writes current env into `/tmp/pocket-env.sh`, starts Pocket ID, waits for `/healthz`, then proxies the original request.
+- State and startup leases live in `CONTROLLER_DATABASE_URL`, not process memory. The controller DB must be separate from Pocket ID's database.
+- The controller hostname is Pocket ID's `APP_URL`, OIDC issuer, and WebAuthn RP ID. Users never see `sb-*.vercel.run`.
+
+## Environment variables
+
+| Variable | Required | Value / notes |
+|---|---:|---|
+| `DATABASE_URL_UNPOOLED` | yes | Pocket ID's unpooled Neon URL. |
+| `CONTROLLER_DATABASE_URL` | yes | Separate logical Neon DB for `pocket_id_sandbox_lifecycle`; pooled URL is fine. |
+| `ENCRYPTION_KEY` | yes | `openssl rand -base64 32`; stable for this Pocket ID DB, save in password manager. |
+| `STATIC_API_KEY` | yes | `openssl rand -hex 32`; drives `setup.sh`. |
+| `APP_URL` | yes | Exact production controller origin; set before first passkey. |
+| `SANDBOX_NAME` | yes | Stable named Sandbox, e.g. `idp-ws-2026-09-12-oidc`. |
+| `SANDBOX_IDLE_MINUTES` | no | Default 30. Production env changes require controller redeploy. Set 60–120 for a workshop with long pauses. |
+| `SANDBOX_STARTUP_TIMEOUT_MS` | no | Default 15,000; 30,000 recommended. |
+| `DISABLE_RATE_LIMITING` | no | `true` for conference NAT. |
+| `LIFECYCLE_ADMIN_SECRET` | yes | Protects manual `POST /api/lifecycle/stop`. |
+| `CRON_SECRET` | recommended | Vercel supplies this bearer value to cron calls. |
+
+## Deploy
+
+1. Provision Neon. Use one project with two logical databases or two branches:
+   - Pocket ID DB → `DATABASE_URL_UNPOOLED`
+   - controller state DB → `CONTROLLER_DATABASE_URL`
+2. Deploy once to build `image/Dockerfile` into VCR, then create the named persistent Sandbox from that ready `dockerfile` image with port 1411, 4 vCPU, `keepLastSnapshots: { count: 1 }`, and at least a 5-minute session timeout.
+3. Configure all variables above in Production. Deployment Protection must be off: OIDC back-channel clients cannot complete Vercel Authentication.
+4. Deploy the Next.js controller (`npm install && vercel deploy --prod`).
+5. Open `https://<project>.vercel.app/login`. First access resumes/starts the Sandbox. Confirm `GET /api/lifecycle/status` reports both lifecycle and Sandbox `running`.
+6. Provision the workshop:
 
 ```bash
-node sandbox-down.mjs --name idp-ws-2026-09-12-oidc
-# then drop the Neon branch/DB, e.g. in the Neon dashboard or:
-# psql $ADMIN_URL -c "DROP DATABASE <workshop-db>;"
+APP_URL=https://<project>.vercel.app \
+STATIC_API_KEY=<static-key> \
+./setup.sh --headcount 300 --tokens 4 --days 2
 ```
 
-Function path — Marketplace resources do **not** die with the project:
+Pocket ID caps one signup token at 100 uses. `--tokens 4` creates 400 uses across four QR links; print one per room/table and keep an extra token for latecomers.
+
+## Operations
 
 ```bash
-./teardown.sh idp-ws-2026-09-12-oidc --scope <team> --yes
+# inspect without waking the Sandbox
+curl https://<project>.vercel.app/api/lifecycle/status
+
+# manual graceful stop
+curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
+  -H "Authorization: Bearer $LIFECYCLE_ADMIN_SECRET"
+
+# next ordinary request transparently resumes it
+curl https://<project>.vercel.app/login
 ```
 
-Then verify in the dashboard: project gone **and** Neon resource gone.
+A stopped Sandbox does not accrue provisioned-memory cost. A running 4-vCPU Sandbox has 8 GB provisioned memory (~$0.1696/hour in `iad1`) plus active CPU. Default 30-minute idle grace costs at most ~$0.085 after the last auth request. The Vercel controller Function uses Fluid pricing and is idle between requests.
 
-## Env vars
+## Teardown
 
-| Var | Value | Notes |
-|---|---|---|
-| `PORT` | `1411` | Container/sandbox listen port. Pre-filled by the Deploy Button. |
-| `DISABLE_RATE_LIMITING` | `true` | Conference NAT shares one IP. Pre-filled. Unset for a shared/long-lived instance. |
-| `ENCRYPTION_KEY` | `openssl rand -base64 32` | **You provide it.** ≥16 bytes or the process exits. Stable per DB — a fresh DB needs a fresh key; reusing a DB with the wrong key fails decrypting the JWT key. Password manager. |
-| `STATIC_API_KEY` | `openssl rand -hex 32` | **You provide it.** ≥16 chars. Drives `setup.sh`. |
-| `APP_URL` | sandbox URL / custom domain | Must equal the public origin **before** the first passkey (WebAuthn RP ID = hostname). `sandbox-up.mjs` sets it from the sandbox domain automatically. |
-| `DATABASE_URL_UNPOOLED` | Neon-injected (Function) / you provide (Sandbox) | Sandbox: any unpooled Postgres URL (Neon branch). Do not share one DB between two running instances — second holder crash-loops. |
-| `MAXMIND_LICENSE_KEY` | unset | If set, GeoLite (~60 MB) downloads to `/tmp` on every cold start. |
+Delete all three durable resources:
 
-Project settings (Function path, dashboard after deploy): single region co-located with Neon
-(`iad1`), Performance CPU, Deployment Protection **off** for production, Vercel Toolbar **off**
-(breaks the nonce CSP), no WAF/Attack Challenge (breaks `/api/oidc/token`).
+1. Named Sandbox and its snapshots.
+2. Pocket ID Neon database (attendee PII).
+3. Controller state database/project.
+
+`teardown.sh` remains for the older direct-Function project shape. Marketplace resources do not disappear with project deletion.
 
 ## Files
 
-- `Dockerfile.vercel` — upstream Pocket ID image, runs as UID 1000, maps
-  `DATABASE_URL_UNPOOLED`→`DB_CONNECTION_STRING` and derives `APP_URL` at boot (Function path).
-- `vercel.json` — production-only builds (`ignoreCommand`), single region `iad1`, two daily
-  `/healthz` wake-to-work crons for the midnight cron actors (Function path).
-- `setup.sh` — idempotent provisioner (admin + login link, config, group + client, `--tokens N`
-  parallel signup links). Works against either path — just point `APP_URL` at it.
-- `sandbox-up.mjs` / `sandbox-down.mjs` — boot/teardown the Sandbox path (Node 22+, `@vercel/sandbox`).
-- `teardown.sh` — deletes a Function-path project **and** its Neon resource.
-
-## How it works
-
-- Pocket ID keeps its own users, passkeys, and sessions in Postgres via the unpooled URL.
-  No object storage, no filesystem, no external auth service.
-- Uploads (avatars, logos) live in Postgres (`FILE_BACKEND=database`).
-- Sandbox path: one microVM → one `pocket-id` process → one DB. No second holder can exist, so
-  the single-replica constraint is satisfied structurally. Needs Node + `@vercel/sandbox`
-  (v3.2.1 tested) and a VCR `dockerfile` image (built automatically by any git deploy).
-- Function path: the container derives its canonical URL from the deployment, so WebAuthn RP IDs
-  match with no manual `APP_URL` unless you add a custom domain later.
+- `app/[[...path]]/route.ts` — stable public reverse proxy; buffers request/response bodies and rewrites upstream redirects.
+- `app/api/lifecycle/{idle,status,stop}/route.ts` — cron, status, manual stop.
+- `lib/lifecycle-store.ts` — Neon state and expiring distributed lifecycle lease.
+- `lib/sandbox-control.ts` — resume/start/readiness/session-extension/graceful-stop state machine.
+- `image/Dockerfile` — Pocket ID v2.14.0 upstream OCI image, no upstream code changes.
+- `setup.sh` — idempotent Pocket ID provisioning and parallel signup tokens.
+- `sandbox-up.mjs`, `sandbox-down.mjs` — manual bootstrap/debug helpers.

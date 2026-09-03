@@ -3,23 +3,17 @@
 // Simplest: npm i @vercel/sandbox && node sandbox-up.mjs …
 import { Sandbox } from '@vercel/sandbox';
 
-// sandbox-up.mjs — boot a Pocket ID sidecar as a single-process Vercel Sandbox.
-//
-// Why: Pocket ID embeds a single-replica actor host (max 1 host per DB). On
-// Fluid Functions any overlap starts a 2nd instance that crash-loops (500s).
-// A Sandbox is ONE microVM running ONE pocket-id: measured 300 concurrent VUs,
-// zero 5xx, p95 ~205 ms. Recommended for workshops of 50+ attendees.
+// sandbox-up.mjs — bootstrap the one persistent Sandbox the Vercel controller manages.
 //
 // Usage (env required):
-//   DB_CONNECTION_STRING='postgresql://…' \   # fresh DB! never reuse one
-//   ENCRYPTION_KEY='…' \                       # encrypted with another key
-//   STATIC_API_KEY='…' \
-//   APP_SEED_URL='https://placeholder' \       # replaced with real domain after boot
-//   node sandbox-up.mjs [--name N] [--vcpus N] [--timeout 8h] [--image TAG]
+//   DB_CONNECTION_STRING='postgresql://…' \
+//   ENCRYPTION_KEY='…' STATIC_API_KEY='…' \
+//   APP_URL='https://stable-controller.vercel.app' \
+//   node sandbox-up.mjs [--name N] [--vcpus 4] [--timeout 5m] [--image TAG]
 //
-// After boot the script prints the public URL. Then:
-//   APP_URL=<url> STATIC_API_KEY=<same key> ./setup.sh --headcount 300 --tokens 4
-// APP_URL must equal the sandbox URL (WebAuthn RP ID = hostname).
+// The sandbox route is an internal origin only. APP_URL remains the stable
+// controller hostname across every stop/resume, which preserves OIDC issuer and
+// WebAuthn RP ID. The controller extends sessions while active and idle-stops them.
 const args = process.argv.slice(2);
 const opt = (k, d) => {
   const i = args.indexOf(k);
@@ -27,7 +21,7 @@ const opt = (k, d) => {
 };
 const NAME = opt('--name', `pocket-ws-${new Date().toISOString().slice(0, 10)}`);
 const VCPUS = Number(opt('--vcpus', '4'));
-const TIMEOUT = opt('--timeout', '8h');
+const TIMEOUT = opt('--timeout', '5m');
 let IMAGE = opt('--image', '');
 const toMs = (s) => {
   const m = s.match(/^(\d+)(m|h|d)$/);
@@ -39,6 +33,7 @@ const env = {
   DB_CONNECTION_STRING: process.env.DB_CONNECTION_STRING,
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
   STATIC_API_KEY: process.env.STATIC_API_KEY,
+  APP_URL: process.env.APP_URL,
 };
 for (const [k, v] of Object.entries(env)) {
   if (!v) {
@@ -58,7 +53,7 @@ Object.assign(env, {
   VERSION_CHECK_DISABLED: 'true',
   LOG_JSON: 'true',
   DISABLE_RATE_LIMITING: 'true',
-  APP_URL: 'https://placeholder.invalid', // replaced once the domain is known
+  APP_URL: env.APP_URL,
 });
 
 const sbx = await Sandbox.create({
@@ -69,15 +64,15 @@ const sbx = await Sandbox.create({
   resources: { vcpus: VCPUS },
   tags: { purpose: 'pocket-id-workshop' },
 });
-const appUrl = 'https://' + new URL(sbx.domain(1411)).host;
+const sandboxOrigin = 'https://' + new URL(sbx.domain(1411)).host;
 console.log('sandbox:', sbx.name, sbx.status, sbx.region);
-console.log('APP_URL:', appUrl);
-env.APP_URL = appUrl;
+console.log('internal sandbox origin:', sandboxOrigin);
+console.log('canonical APP_URL:', env.APP_URL);
 
 const exportStr = Object.entries(env)
   .map(([k, v]) => `export ${k}='${v.replace(/'/g, "'\\''")}'`)
   .join('\n');
-await sbx.writeFiles([{ path: '/tmp/pocket-env.sh', content: Buffer.from(exportStr + '\n') }]);
+await sbx.writeFiles([{ path: '/tmp/pocket-env.sh', content: new TextEncoder().encode(exportStr + '\n'), mode: 0o600 }]);
 const cmd = await sbx.runCommand({
   cmd: 'sh',
   args: ['-lc', '. /tmp/pocket-env.sh && exec /app/pocket-id'],
@@ -87,17 +82,19 @@ console.log('pocket-id detached:', cmd.cmdId);
 
 // Poll 127.0.0.1:1411/healthz inside the sandbox until UP (fresh DB migrates).
 for (let i = 0; i < 24; i++) {
-  await new Promise((r) => setTimeout(r, 5000));
+  const { promise, resolve } = Promise.withResolvers();
+  setTimeout(resolve, 1000);
+  await promise;
   const probe = await sbx.runCommand('sh', [
     '-lc',
     'wget -q -O/dev/null --timeout=4 http://127.0.0.1:1411/healthz && echo UP || echo DOWN',
   ]);
   const state = (await probe.stdout()).trim();
-  console.log(`t+${(i + 1) * 5}s: ${state}`);
+  console.log(`t+${i + 1}s: ${state}`);
   if (state === 'UP') break;
 }
 console.log('');
 console.log('Next:');
-console.log(`  APP_URL=${appUrl} STATIC_API_KEY='<same key>' ./setup.sh --headcount 300 --tokens 4`);
-console.log(`Teardown: vercel sandbox remove ${NAME} (+ drop the database)`);
+console.log(`  APP_URL=${env.APP_URL} STATIC_API_KEY='<same key>' ./setup.sh --headcount 300 --tokens 4`);
+console.log(`Controller will now own stop/resume for ${NAME}.`);
 process.exit(0);

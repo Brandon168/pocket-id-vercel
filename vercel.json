@@ -1,9 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["iad1"],
-  "ignoreCommand": "[ \"$VERCEL_ENV\" = \"production\" ] && exit 1 || exit 0",
+  "fluid": true,
   "crons": [
-    { "path": "/healthz", "schedule": "5 0 * * *" },
-    { "path": "/healthz", "schedule": "8 0 * * *" }
+    { "path": "/api/lifecycle/idle", "schedule": "* * * * *" }
   ]
 }
