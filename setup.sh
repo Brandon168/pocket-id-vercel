@@ -9,7 +9,7 @@
 # Defaults: headcount 50, workshop length 2 days, admin username "instructor".
 # Requires: curl, python3. No other dependencies.
 #
-# Contract (AGENTS.md Phase 4):
+# Contract:
 #   1. Ensure a real admin user exists; print a Login Code link for the instructor
 #      (passkeys cannot be created via API — the instructor registers theirs in-browser).
 #   2. App config: signups withToken, requireUserEmail=false, email verification off.
@@ -20,7 +20,7 @@
 #   5. CIMD allowlist is NOT set (Pocket ID validates callback patterns at the client;
 #      RPs register via the admin UI or API).
 #
-# Operational rules (single-replica francis host — see AGENTS.md):
+# Operational rules (single-replica embedded actor host):
 #   - Strictly serial API calls with SLEEP_SECS gaps; concurrent requests 500.
 #   - A 500 is ambiguous (may have committed): every mutating step GET-verifies
 #     before retrying. Never blind-retry a POST/PUT.
