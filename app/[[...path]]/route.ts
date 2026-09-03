@@ -16,11 +16,20 @@ const hopByHopHeaders: Record<string, true> = {
   host: true,
 };
 
+const controllerPaths = ['/workshop', '/join', '/api/workshop', '/api/lifecycle'];
+
+function isControllerPath(pathname: string): boolean {
+  return controllerPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
 async function proxy(request: Request): Promise<Response> {
   try {
+    const inboundUrl = new URL(request.url);
+    if (isControllerPath(inboundUrl.pathname)) {
+      return new Response('Not found', { status: 404 });
+    }
     const origin = await getKnownSandboxOrigin();
     await recordProxyActivity();
-    const inboundUrl = new URL(request.url);
     const upstreamUrl = new URL(inboundUrl.pathname + inboundUrl.search, origin);
     const headers = new Headers(request.headers);
     for (const name of Object.keys(hopByHopHeaders)) headers.delete(name);

@@ -14,9 +14,9 @@ let sqlClient: NeonQueryFunction<false, false> | null = null;
 
 function lifecycleSql() {
   if (sqlClient) return sqlClient;
-  const connectionString = process.env.CONTROLLER_DATABASE_URL;
+  const connectionString = process.env.CONTROLLER_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!connectionString) {
-    throw new Error('CONTROLLER_DATABASE_URL is required and must be separate from Pocket ID DATABASE_URL_UNPOOLED');
+    throw new Error('CONTROLLER_DATABASE_URL or DATABASE_URL is required');
   }
   sqlClient = neon(connectionString);
   return sqlClient;

@@ -13,7 +13,8 @@ import {
 
 const sandboxName = process.env.SANDBOX_NAME ?? 'pocket-id';
 const sandboxPort = 1411;
-const startupTimeoutMs = Number(process.env.SANDBOX_STARTUP_TIMEOUT_MS ?? 15_000);
+const sandboxImage = process.env.SANDBOX_IMAGE ?? 'brandon-vtest314/pocket-id-vercel-test-deploy/pocket-id:latest';
+const startupTimeoutMs = Number(process.env.SANDBOX_STARTUP_TIMEOUT_MS ?? 30_000);
 let knownOrigin: string | null = null;
 let knownOriginUntil = 0;
 let lastActivityTouchAt = 0;
@@ -118,13 +119,22 @@ async function waitForHealth(origin: string): Promise<void> {
 }
 
 async function resumeAsLeaseOwner(owner: string): Promise<string> {
-  const sandbox = await Sandbox.get({ name: sandboxName, resume: true });
+  const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 30);
+  const requiredMs = (idleMinutes + 5) * 60_000;
+  const sandbox = await Sandbox.getOrCreate({
+    name: sandboxName,
+    image: sandboxImage,
+    ports: [sandboxPort],
+    timeout: requiredMs,
+    resources: { vcpus: 1 },
+    persistent: true,
+    keepLastSnapshots: { count: 1 },
+    resume: true,
+  });
   const origin = `https://${new URL(sandbox.domain(sandboxPort)).host}`;
   await markStarting(sandboxName, owner, origin);
   await startPocketId(sandbox, origin);
-  const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 30);
   const sessionRemaining = sandbox.expiresAt ? sandbox.expiresAt.getTime() - Date.now() : 0;
-  const requiredMs = (idleMinutes + 5) * 60_000;
   if (sessionRemaining < requiredMs) {
     await sandbox.extendTimeout(requiredMs - Math.max(sessionRemaining, 0));
   }

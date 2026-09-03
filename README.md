@@ -4,6 +4,8 @@ Run the upstream [Pocket ID](https://github.com/pocket-id/pocket-id) passkey-onl
 
 This is a workshop sidecar: provision it for an event, let it idle to zero, then remove the Sandbox, identity database, and controller state.
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel&project-name=idp-ws-DATE-TOPIC&repository-name=idp-ws-DATE-TOPIC&env=ENCRYPTION_KEY%2CSTATIC_API_KEY%2CWORKSHOP_ADMIN_SECRET%2CDISABLE_RATE_LIMITING%2CSANDBOX_IDLE_MINUTES&envDefaults=%7B%22DISABLE_RATE_LIMITING%22%3A%22true%22%2C%22SANDBOX_IDLE_MINUTES%22%3A%22120%22%7D&envDescription=Enter%20three%20random%20secrets.%20The%20workshop%20console%20creates%20everything%20else.%20Save%20ENCRYPTION_KEY%20until%20the%20workshop%20is%20deleted.&envLink=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel%23environment-variables&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D)
+
 ## Architecture
 
 ![Pocket ID on Vercel architecture: a stable Next.js controller proxies OIDC traffic to one Vercel Sandbox, with Neon storing identity and lifecycle state.](assets/pocket-id-vercel-architecture.jpg)
@@ -73,36 +75,33 @@ The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it 
 
 | Variable | Required | Value / notes |
 |---|---:|---|
-| `DATABASE_URL_UNPOOLED` | yes | Pocket ID's unpooled Neon URL. |
-| `CONTROLLER_DATABASE_URL` | yes | Separate logical Neon DB for `pocket_id_sandbox_lifecycle`; pooled URL is fine. |
-| `ENCRYPTION_KEY` | yes | `openssl rand -base64 32`; stable for this Pocket ID DB, save in password manager. |
-| `STATIC_API_KEY` | yes | `openssl rand -hex 32`; drives `setup.sh`. |
-| `APP_URL` | yes | Exact production controller origin; set before first passkey. |
-| `SANDBOX_NAME` | yes | Stable named Sandbox, e.g. `idp-ws-2026-09-12-oidc`. |
-| `SANDBOX_IDLE_MINUTES` | no | Default 30. Production env changes require controller redeploy. Set 60–120 for a workshop with long pauses. |
-| `SANDBOX_STARTUP_TIMEOUT_MS` | no | Default 15,000; 30,000 recommended. |
-| `DISABLE_RATE_LIMITING` | no | `true` for conference NAT. |
-| `LIFECYCLE_ADMIN_SECRET` | yes | Protects manual `POST /api/lifecycle/stop`. |
+| `DATABASE_URL_UNPOOLED` | yes | Pocket ID database; injected by the Neon store created in the wizard. |
+| `DATABASE_URL` | yes | Controller state; injected by the same Neon store. The workshop template intentionally shares one Neon project for minimal setup. |
+| `CONTROLLER_DATABASE_URL` | no | Optional override for a separate controller database. |
+| `ENCRYPTION_KEY` | yes | Random value, at least 16 bytes; stable for this Pocket ID DB. |
+| `STATIC_API_KEY` | yes | Random value, at least 16 characters; used only by server-side workshop provisioning. |
+| `WORKSHOP_ADMIN_SECRET` | yes | Password for the instructor console at `/workshop`. |
+| `APP_URL` | no | Exact controller origin. Omit for the standard `.vercel.app` project URL. |
+| `SANDBOX_NAME` | no | Defaults to `pocket-id` within the deployed Vercel project. |
+| `SANDBOX_IMAGE` | no | Public Pocket ID VCR image; defaults to the template image. |
+| `SANDBOX_IDLE_MINUTES` | no | Wizard default 120 for long workshop pauses. |
+| `SANDBOX_STARTUP_TIMEOUT_MS` | no | Default 30,000. |
+| `DISABLE_RATE_LIMITING` | no | Wizard default `true` for conference NAT. |
+| `LIFECYCLE_ADMIN_SECRET` | no | Only required for manual `POST /api/lifecycle/stop`. |
 | `CRON_SECRET` | recommended | Vercel supplies this bearer value to cron calls. |
 
 ## Deploy
 
-1. Provision Neon. Use one project with two logical databases or two branches:
-   - Pocket ID DB → `DATABASE_URL_UNPOOLED`
-   - controller state DB → `CONTROLLER_DATABASE_URL`
-2. Deploy once to build `image/Dockerfile` into VCR, then create the named persistent Sandbox from that ready `dockerfile` image with port 1411, **1 vCPU / 2 GB**, `keepLastSnapshots: { count: 1 }`, and at least a 5-minute session timeout.
-3. Configure all variables above in Production. Deployment Protection must be off: OIDC back-channel clients cannot complete Vercel Authentication.
-4. Deploy the Next.js controller (`npm install && vercel deploy --prod`).
-5. Open `https://<project>.vercel.app/login`. First access resumes/starts the Sandbox. Confirm `GET /api/lifecycle/status` reports both lifecycle and Sandbox `running`.
-6. Provision the workshop:
+1. Click **Deploy with Vercel** above and choose a project/repository name.
+2. In the wizard, create the Neon store and enter three random values: `ENCRYPTION_KEY`, `STATIC_API_KEY`, and `WORKSHOP_ADMIN_SECRET`. Leave the two defaults unchanged.
+3. Wait for the deployment to become Ready. The first workshop request creates the named persistent Sandbox from the public Pocket ID image automatically.
+4. Deployment Protection must remain off because OIDC back-channel clients cannot complete Vercel Authentication.
+5. Open `https://<project>.vercel.app/workshop` and enter `WORKSHOP_ADMIN_SECRET` when the browser prompts.
+6. Click **Prepare workshop**. No configuration questions: it creates the instructor admin, workshop group, fixed public PKCE client, and ten 100-use signup pools valid for three days.
+7. Put the displayed QR code or `/join` URL on the workshop slide. The stable link distributes up to 1,000 attendees across the signup pools.
+8. Open the displayed one-time admin login in the instructor browser, add a passkey under **Settings → Account**, then use **Settings → Administration** for Pocket ID's built-in admin tools.
 
-```bash
-APP_URL=https://<project>.vercel.app \
-STATIC_API_KEY=<static-key> \
-./setup.sh --headcount 300 --tokens 4 --days 2
-```
-
-Pocket ID caps one signup token at 100 uses. `--tokens 4` creates 400 uses across four QR links; print one per room/table and keep an extra token for latecomers.
+`setup.sh` remains available for custom headcounts, durations, usernames, or client settings; the default workshop path needs no shell.
 
 ## Operations
 
@@ -133,6 +132,9 @@ Delete all three durable resources:
 
 - `app/[[...path]]/route.ts` — stable public reverse proxy; buffers request/response bodies and rewrites upstream redirects.
 - `app/api/lifecycle/{idle,status,stop}/route.ts` — cron, status, manual stop.
+- `app/workshop` and `app/api/workshop` — password-protected one-click instructor console, slide QR, and admin handoff.
+- `app/join/route.ts` — stable attendee URL distributed across ten 100-use signup tokens.
+- `lib/workshop{,-store,-auth}.ts` — provisioning, controller-DB persistence, and instructor access checks.
 - `lib/lifecycle-store.ts` — Neon state and expiring distributed lifecycle lease.
 - `lib/sandbox-control.ts` — resume/start/readiness/session-extension/graceful-stop state machine.
 - `image/Dockerfile` — Pocket ID v2.14.0 upstream OCI image, no upstream code changes.
