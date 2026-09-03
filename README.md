@@ -3,9 +3,8 @@
 Passkey-only OIDC provider ([Pocket ID](https://github.com/pocket-id/pocket-id), Go + embedded SvelteKit SPA)
 running as a Vercel Container Images function with Neon Postgres. Zero code changes to upstream.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fpocket-id%2Fpocket-id-vercel&project-name=idp-ws-DATE-TOPIC&env=PORT%2CDISABLE_RATE_LIMITING&envDefaults=%7B%22PORT%22%3A%221411%22%2C%22DISABLE_RATE_LIMITING%22%3A%22true%22%7D&envDescription=PORT%20must%20be%201411%20(the%20container%20listens%20there)%3B%20rate%20limiting%20is%20off%20because%20conference%20NAT%20shares%20one%20IP.&envLink=https%3A%2F%2Fgithub.com%2Fpocket-id%2Fpocket-id-vercel%23env-vars&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel&project-name=idp-ws-DATE-TOPIC&env=PORT%2CDISABLE_RATE_LIMITING&envDefaults=%7B%22PORT%22%3A%221411%22%2C%22DISABLE_RATE_LIMITING%22%3A%22true%22%7D&envDescription=PORT%20must%20be%201411%20(the%20container%20listens%20there)%3B%20rate%20limiting%20is%20off%20because%20conference%20NAT%20shares%20one%20IP.&envLink=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel%23env-vars&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D)
 
-> Replace `pocket-id/pocket-id-vercel` with this repo's real org/name before publishing the button.
 > The `stores` value decodes to `[{"type":"integration","integrationSlug":"neon","productSlug":"neon","protocol":"storage"}]`
 > — confirm `productSlug` against a live `stores`-probed Neon template before the first real workshop
 > (AGENTS.md verify item: Deploy Button `products` param format).
