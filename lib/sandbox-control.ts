@@ -14,6 +14,29 @@ import {
 const sandboxName = process.env.SANDBOX_NAME ?? 'pocket-id';
 const sandboxPort = 1411;
 const startupTimeoutMs = Number(process.env.SANDBOX_STARTUP_TIMEOUT_MS ?? 15_000);
+let knownOrigin: string | null = null;
+let knownOriginUntil = 0;
+let lastActivityTouchAt = 0;
+
+export async function getKnownSandboxOrigin(): Promise<string> {
+  if (knownOrigin && Date.now() < knownOriginUntil) return knownOrigin;
+  const origin = await ensureSandboxReady();
+  knownOrigin = origin;
+  knownOriginUntil = Date.now() + 5 * 60_000;
+  return origin;
+}
+
+export function invalidateKnownSandboxOrigin(): void {
+  knownOrigin = null;
+  knownOriginUntil = 0;
+}
+
+export async function recordProxyActivity(): Promise<void> {
+  const now = Date.now();
+  if (now - lastActivityTouchAt < 60_000) return;
+  lastActivityTouchAt = now;
+  await touchActivity(sandboxName);
+}
 function sleep(milliseconds: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, milliseconds);
@@ -99,9 +122,11 @@ async function resumeAsLeaseOwner(owner: string): Promise<string> {
   const origin = `https://${new URL(sandbox.domain(sandboxPort)).host}`;
   await markStarting(sandboxName, owner, origin);
   await startPocketId(sandbox, origin);
-  const sessionRemaining = sandbox.expiresAt ? sandbox.expiresAt.getTime() - Date.now() : startupTimeoutMs;
-  if (sessionRemaining < startupTimeoutMs + 5_000) {
-    await sandbox.extendTimeout(startupTimeoutMs + 60_000);
+  const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 30);
+  const sessionRemaining = sandbox.expiresAt ? sandbox.expiresAt.getTime() - Date.now() : 0;
+  const requiredMs = (idleMinutes + 5) * 60_000;
+  if (sessionRemaining < requiredMs) {
+    await sandbox.extendTimeout(requiredMs - Math.max(sessionRemaining, 0));
   }
   await waitForHealth(origin);
   await markRunning(sandboxName, owner, origin, sandbox.expiresAt);
@@ -110,7 +135,6 @@ async function resumeAsLeaseOwner(owner: string): Promise<string> {
 
 export async function ensureSandboxReady(): Promise<string> {
   const state = await getLifecycleState(sandboxName);
-  await touchActivity(sandboxName);
   if (state.status === 'running' && state.origin) {
     try {
       const sandbox = await Sandbox.get({ name: sandboxName, resume: false });
@@ -120,10 +144,8 @@ export async function ensureSandboxReady(): Promise<string> {
           signal: AbortSignal.timeout(1_000),
         });
         if (response.status === 204) {
-          const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 30);
-          const remainingMs = sandbox.expiresAt ? sandbox.expiresAt.getTime() - Date.now() : 0;
-          const requiredMs = (idleMinutes + 5) * 60_000;
-          if (remainingMs < requiredMs) await sandbox.extendTimeout(requiredMs - Math.max(remainingMs, 0));
+          knownOrigin = state.origin;
+          knownOriginUntil = Date.now() + 5 * 60_000;
           return state.origin;
         }
       }
@@ -135,7 +157,10 @@ export async function ensureSandboxReady(): Promise<string> {
   const owner = randomUUID();
   if (await acquireLifecycleLease(sandboxName, owner, 'starting')) {
     try {
-      return await resumeAsLeaseOwner(owner);
+      const origin = await resumeAsLeaseOwner(owner);
+      knownOrigin = origin;
+      knownOriginUntil = Date.now() + 5 * 60_000;
+      return origin;
     } catch (error) {
       await markFailed(sandboxName, owner, error);
       throw error;
@@ -146,7 +171,11 @@ export async function ensureSandboxReady(): Promise<string> {
   while (Date.now() < deadline) {
     await sleep(200);
     const current = await getLifecycleState(sandboxName);
-    if (current.status === 'running' && current.origin) return current.origin;
+    if (current.status === 'running' && current.origin) {
+      knownOrigin = current.origin;
+      knownOriginUntil = Date.now() + 5 * 60_000;
+      return current.origin;
+    }
     if (current.status === 'failed') throw new Error(current.lastError ?? 'Sandbox startup failed');
     if (current.leaseUntil && current.leaseUntil.getTime() < Date.now()) return ensureSandboxReady();
   }
@@ -191,6 +220,7 @@ export async function stopIfIdle(): Promise<'kept' | 'stopped'> {
       await sandbox.stop();
     }
     await markStopped(sandboxName, owner);
+    invalidateKnownSandboxOrigin();
     return 'stopped';
   } catch (error) {
     await markFailed(sandboxName, owner, error);
@@ -226,6 +256,7 @@ export async function stopSandboxNow(): Promise<void> {
       await sandbox.stop();
     }
     await markStopped(sandboxName, owner);
+    invalidateKnownSandboxOrigin();
   } catch (error) {
     await markFailed(sandboxName, owner, error);
     throw error;

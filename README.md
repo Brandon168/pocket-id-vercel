@@ -12,11 +12,10 @@ Vercel Next.js controller
   - proxies every request
   - Neon-backed lifecycle lease
   - resumes one persistent Sandbox on demand
-  - restarts Pocket ID and waits for /healthz
   - one-minute cron stops it after idle timeout
         |
         v
-one Vercel Sandbox (2 vCPU / 4 GB tested)
+one Vercel Sandbox (2 vCPU / 4 GB default)
   - one Pocket ID process (satisfies max-hosts=1)
   - public sandbox route is an internal origin only
         |
@@ -38,9 +37,10 @@ Pocket ID's embedded francis host permits one replica per database. Direct Conta
 | 20 simultaneous cold GETs | 20/20 HTTP 200, 1.32–1.79 s, one leased resume |
 | Controller stop | 15–16 s including Pocket ID's 10-second actor shutdown grace and snapshot |
 | Controller immediate restart after deterministic host cleanup | 200 in 1.77 s |
-| 2-vCPU Sandbox through controller, 300-VU synthetic 1,300 req/s | Controller/Neon lifecycle state exhausted DB connections; not representative of the workshop and not accepted as a capacity pass |
+| 2-vCPU Sandbox through controller, accidental ~1,300 req/s | Found controller lifecycle-DB connection exhaustion; Pocket ID remained fast. Drove hot-origin caching and activity-write coalescing. |
+| Tuned 2-vCPU controller, bounded 300 rps for 90 s | **26,912 requests, zero failures**, p95 149 ms, max 1.25 s; ~99.7 MB peak cgroup memory of 4 GB (~2.4%) |
 
-The last row found a controller bottleneck, not Pocket ID memory pressure. `touchActivity` is now coalesced to one lifecycle write/minute. Still, only the 4-vCPU direct Sandbox has a clean 300-VU capacity proof. Keep **4 vCPU / 8 GB** as the safe workshop default until the real 300-user journey passes through the controller at 2 vCPU.
+The accidental ~1,300 req/s run is retained as common-sense tuning evidence: it was far above the 300-user workshop target, showed no Pocket ID memory/CPU symptom, and isolated per-request controller work as the bottleneck. Hot origins are now cached per Function instance, lifecycle activity writes are coalesced, bodyless 204 responses are handled correctly, and sessions are extended through the idle horizon. The bounded 300-rps rerun passed cleanly with ~97.6% RAM headroom. The default is **2 vCPU / 4 GB**; use 4 vCPU only if a future realistic journey benchmark demonstrates CPU or latency pressure.
 
 ## Lifecycle
 
@@ -72,7 +72,7 @@ The last row found a controller bottleneck, not Pocket ID memory pressure. `touc
 1. Provision Neon. Use one project with two logical databases or two branches:
    - Pocket ID DB → `DATABASE_URL_UNPOOLED`
    - controller state DB → `CONTROLLER_DATABASE_URL`
-2. Deploy once to build `image/Dockerfile` into VCR, then create the named persistent Sandbox from that ready `dockerfile` image with port 1411, 4 vCPU, `keepLastSnapshots: { count: 1 }`, and at least a 5-minute session timeout.
+2. Deploy once to build `image/Dockerfile` into VCR, then create the named persistent Sandbox from that ready `dockerfile` image with port 1411, **2 vCPU / 4 GB**, `keepLastSnapshots: { count: 1 }`, and at least a 5-minute session timeout.
 3. Configure all variables above in Production. Deployment Protection must be off: OIDC back-channel clients cannot complete Vercel Authentication.
 4. Deploy the Next.js controller (`npm install && vercel deploy --prod`).
 5. Open `https://<project>.vercel.app/login`. First access resumes/starts the Sandbox. Confirm `GET /api/lifecycle/status` reports both lifecycle and Sandbox `running`.
@@ -100,7 +100,7 @@ curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
 curl https://<project>.vercel.app/login
 ```
 
-A stopped Sandbox does not accrue provisioned-memory cost. A running 4-vCPU Sandbox has 8 GB provisioned memory (~$0.1696/hour in `iad1`) plus active CPU. Default 30-minute idle grace costs at most ~$0.085 after the last auth request. The Vercel controller Function uses Fluid pricing and is idle between requests.
+A stopped Sandbox does not accrue provisioned-memory cost. A running 2-vCPU Sandbox has 4 GB provisioned memory (~$0.0848/hour in `iad1`) plus active CPU. Default 30-minute idle grace costs at most ~$0.042 after the last auth request. The Vercel controller Function uses Fluid pricing and is idle between requests.
 
 ## Teardown
 

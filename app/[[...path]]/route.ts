@@ -1,4 +1,4 @@
-import { ensureSandboxReady } from '@/lib/sandbox-control';
+import { getKnownSandboxOrigin, invalidateKnownSandboxOrigin, recordProxyActivity } from '@/lib/sandbox-control';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -18,7 +18,8 @@ const hopByHopHeaders: Record<string, true> = {
 
 async function proxy(request: Request): Promise<Response> {
   try {
-    const origin = await ensureSandboxReady();
+    const origin = await getKnownSandboxOrigin();
+    await recordProxyActivity();
     const inboundUrl = new URL(request.url);
     const upstreamUrl = new URL(inboundUrl.pathname + inboundUrl.search, origin);
     const headers = new Headers(request.headers);
@@ -42,15 +43,18 @@ async function proxy(request: Request): Promise<Response> {
       const externalOrigin = inboundUrl.origin;
       responseHeaders.set('location', location.replace(origin, externalOrigin));
     }
-    const body = request.method === 'HEAD' ? null : new Uint8Array(await response.arrayBuffer());
+    const bodyless = request.method === 'HEAD' || response.status === 204 || response.status === 304;
+    const body = bodyless ? null : new Uint8Array(await response.arrayBuffer());
     responseHeaders.delete('content-encoding');
-    responseHeaders.set('content-length', String(body?.byteLength ?? 0));
+    if (body) responseHeaders.set('content-length', String(body.byteLength));
+    else responseHeaders.delete('content-length');
     return new Response(body, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,
     });
   } catch (error) {
+    invalidateKnownSandboxOrigin();
     console.error('Pocket ID proxy failed', error);
     return Response.json(
       { error: 'Pocket ID is starting. Retry in a few seconds.' },

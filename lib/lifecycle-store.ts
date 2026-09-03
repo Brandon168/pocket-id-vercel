@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
 
 export type LifecycleState = {
   name: string;
@@ -10,12 +10,16 @@ export type LifecycleState = {
   sessionExpiresAt: Date | null;
   lastError: string | null;
 };
+let sqlClient: NeonQueryFunction<false, false> | null = null;
+
 function lifecycleSql() {
+  if (sqlClient) return sqlClient;
   const connectionString = process.env.CONTROLLER_DATABASE_URL;
   if (!connectionString) {
     throw new Error('CONTROLLER_DATABASE_URL is required and must be separate from Pocket ID DATABASE_URL_UNPOOLED');
   }
-  return neon(connectionString);
+  sqlClient = neon(connectionString);
+  return sqlClient;
 }
 
 export async function initializeLifecycleState(name: string): Promise<void> {

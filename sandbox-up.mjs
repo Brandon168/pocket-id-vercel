@@ -9,7 +9,7 @@ import { Sandbox } from '@vercel/sandbox';
 //   DB_CONNECTION_STRING='postgresql://…' \
 //   ENCRYPTION_KEY='…' STATIC_API_KEY='…' \
 //   APP_URL='https://stable-controller.vercel.app' \
-//   node sandbox-up.mjs [--name N] [--vcpus 4] [--timeout 5m] [--image TAG]
+//   node sandbox-up.mjs [--name N] [--vcpus 2] [--timeout 5m] [--image TAG]
 //
 // The sandbox route is an internal origin only. APP_URL remains the stable
 // controller hostname across every stop/resume, which preserves OIDC issuer and
@@ -20,7 +20,7 @@ const opt = (k, d) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : d;
 };
 const NAME = opt('--name', `pocket-ws-${new Date().toISOString().slice(0, 10)}`);
-const VCPUS = Number(opt('--vcpus', '4'));
+const VCPUS = Number(opt('--vcpus', '2'));
 const TIMEOUT = opt('--timeout', '5m');
 let IMAGE = opt('--image', '');
 const toMs = (s) => {
