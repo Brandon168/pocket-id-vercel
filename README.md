@@ -106,9 +106,10 @@ curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
 curl https://<project>.vercel.app/login
 ```
 
+A stopped Sandbox does not accrue provisioned-memory usage, but its retained snapshot uses snapshot storage. The Deploy Button's 120-minute idle setting requires Pro or Enterprise and keeps the Sandbox available through workshop pauses; lower it after testing if shorter pauses are acceptable. Vercel Functions run the controller only when requests or the idle cron execute.
+
 ## Teardown
 
-A stopped Sandbox does not accrue provisioned-memory usage, but its retained snapshot uses snapshot storage. The Deploy Button's 120-minute idle setting requires Pro or Enterprise and keeps the Sandbox available through workshop pauses; lower it after testing if shorter pauses are acceptable. Vercel Functions run the controller only when requests or the idle cron execute.
 
 Delete both workshop resources after the event:
 
