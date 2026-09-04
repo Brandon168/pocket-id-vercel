@@ -155,9 +155,13 @@ async function addAdminToGroup(origin: string, groupId: string, adminId: string)
 }
 
 // One-time login links. Pocket ID issues a 6-character code for TTLs up to
-// 15 minutes and a 12-character code beyond that; /lc/<code> auto-submits
+// 15 minutes and a 12-character code beyond that; the code page auto-submits
 // either. Links are minted on demand rather than stored, because a stale
 // code fails silently and drops the user on a manual code-entry form.
+//
+// The canonical /login/alternative/code URL is used instead of the /lc/<code>
+// alias: the alias performs a client-side 307 that races the page's own
+// post-login navigation, leaving the user signed in but stuck on the form.
 export const loginLinkTtl = '1h';
 
 async function mintLoginLink(origin: string, publicOrigin: string, userId: string, redirectPath: string): Promise<string> {
@@ -165,7 +169,10 @@ async function mintLoginLink(origin: string, publicOrigin: string, userId: strin
     method: 'POST',
     body: JSON.stringify({ ttl: loginLinkTtl }),
   });
-  return `${publicOrigin}/lc/${token}?redirect=${encodeURIComponent(redirectPath)}`;
+  const url = new URL('/login/alternative/code', publicOrigin);
+  url.searchParams.set('code', token);
+  url.searchParams.set('redirect', redirectPath);
+  return url.toString();
 }
 
 async function mintSignupTokens(origin: string, groupId: string, tokenCount: number): Promise<string[]> {
