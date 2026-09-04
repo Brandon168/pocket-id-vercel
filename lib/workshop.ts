@@ -164,7 +164,9 @@ async function addAdminToGroup(origin: string, groupId: string, adminId: string)
 // post-login navigation, leaving the user signed in but stuck on the form.
 export const loginLinkTtl = '1h';
 
-async function mintLoginLink(origin: string, publicOrigin: string, userId: string, redirectPath: string): Promise<string> {
+export type LoginLink = { code: string; loginUrl: string; codeEntryUrl: string };
+
+async function mintLoginLink(origin: string, publicOrigin: string, userId: string, redirectPath: string): Promise<LoginLink> {
   const { token } = await pocketApi<{ token: string }>(origin, `/users/${userId}/one-time-access-token`, {
     method: 'POST',
     body: JSON.stringify({ ttl: loginLinkTtl }),
@@ -172,7 +174,8 @@ async function mintLoginLink(origin: string, publicOrigin: string, userId: strin
   const url = new URL('/login/alternative/code', publicOrigin);
   url.searchParams.set('code', token);
   url.searchParams.set('redirect', redirectPath);
-  return url.toString();
+  // /lc is Pocket ID's short alias for the manual code-entry page.
+  return { code: token, loginUrl: url.toString(), codeEntryUrl: `${publicOrigin}/lc` };
 }
 
 async function mintSignupTokens(origin: string, groupId: string, tokenCount: number): Promise<string[]> {
@@ -202,7 +205,7 @@ export async function setupWorkshop(requestOrigin: string): Promise<WorkshopSetu
   await ensureClient(origin, group.id);
   await addAdminToGroup(origin, group.id, admin.id);
   // Stored for schema compatibility only; the console mints a fresh link on demand.
-  const adminLoginUrl = await mintLoginLink(origin, publicOrigin, admin.id, '/settings/admin/users');
+  const { loginUrl: adminLoginUrl } = await mintLoginLink(origin, publicOrigin, admin.id, '/settings/admin/users');
   await pause();
   const signupTokens = await mintSignupTokens(origin, group.id, tokenCount);
   const setup: WorkshopSetup = {
@@ -225,36 +228,133 @@ export async function refreshAdminLogin(requestOrigin: string): Promise<AdminLog
   const setup = await getWorkshopSetup(workshopName);
   if (!setup) throw new Error('Workshop has not been set up');
   const origin = await getKnownSandboxOrigin();
-  const loginUrl = await mintLoginLink(origin, appUrl(requestOrigin), setup.adminId, '/settings/admin/users');
+  const { loginUrl } = await mintLoginLink(origin, appUrl(requestOrigin), setup.adminId, '/settings/admin/users');
   await updateAdminLoginUrl(workshopName, loginUrl);
   return { loginUrl, ttl: loginLinkTtl };
 }
 
-export type AttendeeLogin = {
+export type AttendeeLogin = LoginLink & {
   username: string;
   displayName: string;
-  loginUrl: string;
 };
 
 export class AttendeeNotFoundError extends Error {
-  constructor(username: string) {
-    super(`No attendee with username '${username}'`);
+  constructor(identifier: string) {
+    super(`No attendee matching '${identifier}'`);
   }
 }
 
-// Mints a one-time login link for an attendee who cannot use a passkey.
-export async function issueAttendeeLogin(requestOrigin: string, rawUsername: string): Promise<AttendeeLogin> {
-  const username = rawUsername.trim().toLowerCase();
-  if (!username) throw new AttendeeNotFoundError(rawUsername);
-  const origin = await getKnownSandboxOrigin();
-  const found = await pocketApi<Paginated<User & { displayName?: string }>>(
+type PocketUser = {
+  id: string;
+  username: string;
+  displayName?: string;
+  email?: string | null;
+  isAdmin: boolean;
+  disabled: boolean;
+};
+
+async function findAttendee(origin: string, selector: { userId?: string; username?: string }): Promise<PocketUser> {
+  if (selector.userId) {
+    try {
+      return await pocketApi<PocketUser>(origin, `/users/${encodeURIComponent(selector.userId)}`);
+    } catch {
+      throw new AttendeeNotFoundError(selector.userId);
+    }
+  }
+  const username = selector.username?.trim().toLowerCase() ?? '';
+  if (!username) throw new AttendeeNotFoundError(selector.username ?? '');
+  const found = await pocketApi<Paginated<PocketUser>>(
     origin,
     `/users?search=${encodeURIComponent(username)}&pagination[limit]=20`,
   );
   const user = found.data?.find((candidate) => candidate.username.toLowerCase() === username);
-  if (!user) throw new AttendeeNotFoundError(rawUsername);
-  const loginUrl = await mintLoginLink(origin, appUrl(requestOrigin), user.id, '/settings/account');
-  return { username: user.username, displayName: user.displayName?.trim() || user.username, loginUrl };
+  if (!user) throw new AttendeeNotFoundError(username);
+  return user;
+}
+
+// Mints a one-time login for an attendee who cannot use a passkey.
+export async function issueAttendeeLogin(
+  requestOrigin: string,
+  selector: { userId?: string; username?: string },
+): Promise<AttendeeLogin> {
+  const origin = await getKnownSandboxOrigin();
+  const user = await findAttendee(origin, selector);
+  const link = await mintLoginLink(origin, appUrl(requestOrigin), user.id, '/settings/account');
+  return { ...link, username: user.username, displayName: user.displayName?.trim() || user.username };
+}
+
+export type Attendee = {
+  id: string;
+  username: string;
+  displayName: string;
+  email: string | null;
+  disabled: boolean;
+  // null when the passkey lookup failed; the UI shows "unknown".
+  hasPasskey: boolean | null;
+};
+
+export type AttendeePage = {
+  attendees: Attendee[];
+  page: number;
+  totalPages: number;
+  totalItems: number;
+};
+
+type PaginationInfo = { totalPages?: number; totalItems?: number; currentPage?: number };
+const attendeePageSize = 25;
+const passkeyLookupConcurrency = 4;
+
+async function hasPasskey(origin: string, userId: string): Promise<boolean | null> {
+  try {
+    const result = await pocketApi<unknown>(origin, `/users/${encodeURIComponent(userId)}/webauthn-credentials`);
+    const credentials = Array.isArray(result) ? result : (result as Paginated<unknown>)?.data ?? [];
+    return credentials.length > 0;
+  } catch {
+    return null;
+  }
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function run() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return results;
+}
+
+// Lists non-admin users (attendees), newest first, with passkey status.
+export async function listAttendees(search: string, page: number): Promise<AttendeePage> {
+  const origin = await getKnownSandboxOrigin();
+  const params = new URLSearchParams({
+    'pagination[page]': String(Math.max(1, page)),
+    'pagination[limit]': String(attendeePageSize),
+    'sort[column]': 'createdAt',
+    'sort[direction]': 'desc',
+    'filters[isAdmin]': 'false',
+  });
+  if (search.trim()) params.set('search', search.trim());
+  const listed = await pocketApi<Paginated<PocketUser> & { pagination?: PaginationInfo }>(origin, `/users?${params}`);
+  const users = listed.data ?? [];
+  const passkeys = await mapWithConcurrency(users, passkeyLookupConcurrency, (user) => hasPasskey(origin, user.id));
+  return {
+    attendees: users.map((user, index) => ({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName?.trim() || user.username,
+      email: user.email ?? null,
+      disabled: user.disabled,
+      hasPasskey: passkeys[index],
+    })),
+    page: listed.pagination?.currentPage ?? page,
+    totalPages: listed.pagination?.totalPages ?? 1,
+    totalItems: listed.pagination?.totalItems ?? users.length,
+  };
 }
 
 export type SignupProgress = {

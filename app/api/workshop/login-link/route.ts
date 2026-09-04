@@ -8,9 +8,12 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: Request): Promise<Response> {
   if (!(await isWorkshopAdmin(request))) return workshopUnauthorized();
   try {
-    const body = await request.json().catch(() => ({})) as { username?: unknown };
-    const username = typeof body.username === 'string' ? body.username : '';
-    const login = await issueAttendeeLogin(new URL(request.url).origin, username);
+    const body = await request.json().catch(() => ({})) as { userId?: unknown; username?: unknown };
+    const selector = {
+      userId: typeof body.userId === 'string' ? body.userId : undefined,
+      username: typeof body.username === 'string' ? body.username : undefined,
+    };
+    const login = await issueAttendeeLogin(new URL(request.url).origin, selector);
     return Response.json(login, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof AttendeeNotFoundError) {

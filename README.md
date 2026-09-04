@@ -42,7 +42,7 @@ Signup capacity is `expected attendees × 1.2`, rounded up to whole 100-use sign
 Passkeys need no app: Touch ID, Face ID, Windows Hello, or Android screen lock all work, and the browser offers a QR code so a personal phone can hold the passkey for a locked-down laptop. For the few who are blocked entirely:
 
 - **Skip for now** at the passkey step. Signup already signed them in, and the controller sets Pocket ID sessions to 30 days, so they stay signed in for the whole event on that device.
-- **Signed out or on another device:** in `/workshop`, type their username under *Help an attendee* and send them the one-time login link. This is Pocket ID's login-code feature, also available in the admin UI under Users.
+- **Signed out or on another device:** the *Attendees* table in `/workshop` lists everyone who has registered, newest first, with a Passkey column so you can spot who skipped it. **Login code** on their row mints a 12-character one-time code (valid one hour). Read it out and have them type it at `<project>.vercel.app/lc`, or copy the full link and send it. No email is involved. For most workshops this means never opening the Pocket ID admin UI; it remains one click away for anything else.
 
 ## Teardown
 
