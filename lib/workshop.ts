@@ -1,3 +1,4 @@
+import { getLifecycleState } from './lifecycle-store';
 import { getKnownSandboxOrigin } from './sandbox-control';
 import { requireSecrets } from './secrets';
 import {
@@ -73,6 +74,8 @@ async function configureSignups(origin: string, options: WorkshopOptions): Promi
     requireUserEmail: options.requireEmail ? 'true' : 'false',
     emailsVerified: 'false',
     emailVerificationEnabled: 'false',
+    // Attendees who skip passkey creation stay signed in for the whole event.
+    sessionDuration: String(30 * 24 * 60),
   });
   await pocketApi(origin, '/application-configuration', {
     method: 'PUT',
@@ -208,6 +211,56 @@ export async function refreshAdminLogin(requestOrigin: string): Promise<Workshop
   const adminLoginUrl = await mintAdminLogin(origin, appUrl(requestOrigin), setup.adminId);
   await updateAdminLoginUrl(workshopName, adminLoginUrl);
   return { ...setup, adminLoginUrl };
+}
+
+export type AttendeeLogin = {
+  username: string;
+  displayName: string;
+  loginUrl: string;
+};
+
+export class AttendeeNotFoundError extends Error {
+  constructor(username: string) {
+    super(`No attendee with username '${username}'`);
+  }
+}
+
+// Mints a one-time login link for an attendee who cannot use a passkey.
+export async function issueAttendeeLogin(requestOrigin: string, rawUsername: string): Promise<AttendeeLogin> {
+  const username = rawUsername.trim().toLowerCase();
+  if (!username) throw new AttendeeNotFoundError(rawUsername);
+  const origin = await getKnownSandboxOrigin();
+  const found = await pocketApi<Paginated<User & { displayName?: string }>>(
+    origin,
+    `/users?search=${encodeURIComponent(username)}&pagination[limit]=20`,
+  );
+  const user = found.data?.find((candidate) => candidate.username.toLowerCase() === username);
+  if (!user) throw new AttendeeNotFoundError(rawUsername);
+  const loginUrl = await mintAdminLogin(origin, appUrl(requestOrigin), user.id);
+  return { username: user.username, displayName: user.displayName?.trim() || user.username, loginUrl };
+}
+
+export type SignupProgress = {
+  used: number;
+  capacity: number;
+  sandboxRunning: boolean;
+};
+
+type SignupToken = { token: string; usageLimit: number; usageCount: number };
+
+// Reads signup token usage without waking a stopped Sandbox.
+export async function getSignupProgress(): Promise<SignupProgress> {
+  const setup = await getWorkshopSetup(workshopName);
+  if (!setup) return { used: 0, capacity: 0, sandboxRunning: false };
+  const state = await getLifecycleState(workshopName);
+  if (state.status !== 'running') return { used: 0, capacity: setup.capacity, sandboxRunning: false };
+  const origin = await getKnownSandboxOrigin();
+  const listed = await pocketApi<Paginated<SignupToken>>(origin, '/signup-tokens?pagination[limit]=100');
+  const ours = new Set(setup.signupTokens);
+  const used = (listed.data ?? [])
+    .filter((token) => ours.has(token.token))
+    .reduce((total, token) => total + token.usageCount, 0);
+  return { used, capacity: setup.capacity, sandboxRunning: true };
 }
 
 export function getWorkshopName(): string {

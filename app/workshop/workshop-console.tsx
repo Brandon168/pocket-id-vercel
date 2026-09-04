@@ -10,6 +10,9 @@ type WorkshopSetup = {
   expiresAt: string;
 };
 
+type SignupProgress = { used: number; capacity: number; sandboxRunning: boolean };
+type AttendeeLogin = { username: string; displayName: string; loginUrl: string };
+
 type WorkshopStatus = {
   setup: WorkshopSetup | null;
   options: { expectedAttendees: number; requireEmail: boolean };
@@ -66,6 +69,49 @@ export function WorkshopConsole() {
     setSetup(result);
   }
 
+  const [progress, setProgress] = useState<SignupProgress | null>(null);
+  const [helpUsername, setHelpUsername] = useState('');
+  const [helpResult, setHelpResult] = useState<AttendeeLogin | null>(null);
+  const [helpError, setHelpError] = useState('');
+  const [helping, setHelping] = useState(false);
+
+  useEffect(() => {
+    if (!setup) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const response = await fetch(`${window.location.origin}/api/workshop/signups`, { cache: 'no-store' });
+        if (response.ok && !cancelled) setProgress(await response.json() as SignupProgress);
+      } catch {
+        // Progress is decorative; ignore transient failures.
+      }
+    }
+    void poll();
+    const timer = setInterval(poll, 15_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [setup]);
+
+  async function issueLoginLink(event: React.FormEvent) {
+    event.preventDefault();
+    setHelping(true);
+    setHelpError('');
+    setHelpResult(null);
+    try {
+      const response = await fetch(`${window.location.origin}/api/workshop/login-link`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: helpUsername }),
+      });
+      const result = await response.json() as AttendeeLogin & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Could not create login link');
+      setHelpResult(result);
+    } catch (cause) {
+      setHelpError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setHelping(false);
+    }
+  }
+
   async function copy(value: string, label: string) {
     await navigator.clipboard.writeText(value);
     setCopied(label);
@@ -112,7 +158,11 @@ export function WorkshopConsole() {
             <p className="eyebrow">Attendee signup</p>
             <h2>Put this on your slide</h2>
           </div>
-          <span className="badge">Up to {setup.capacity.toLocaleString()}</span>
+          <span className="badge">
+            {progress?.sandboxRunning
+              ? `${progress.used.toLocaleString()} of ${setup.capacity.toLocaleString()} signed up`
+              : `Up to ${setup.capacity.toLocaleString()}`}
+          </span>
         </div>
         <div className="qr-frame"><img src={qrUrl} alt={`QR code for ${setup.joinUrl}`} /></div>
         <div className="url-box">
@@ -132,12 +182,54 @@ export function WorkshopConsole() {
         </div>
         <dl>
           <div><dt>Username</dt><dd><code>{setup.adminUsername}</code></dd></div>
-          <div><dt>Administration</dt><dd><code>/settings/admin</code></dd></div>
+          <div><dt>Admin: users</dt><dd><a href="/settings/admin/users">/settings/admin/users</a></dd></div>
+          <div><dt>Admin: OIDC clients</dt><dd><a href="/settings/admin/oidc-clients">/settings/admin/oidc-clients</a></dd></div>
         </dl>
         <a className="primary link-button" href={setup.adminLoginUrl}>Open one-time admin login</a>
-        <p className="muted small">Open this once in your instructor browser, then add a passkey at <strong>Settings → Account</strong>. Admin tools are under <strong>Settings → Administration</strong>.</p>
+        <p className="muted small">
+          Open this once in your instructor browser, then add a passkey under <strong>Settings → Account</strong>.
+          Once signed in as <code>{setup.adminUsername}</code>, an <strong>Administration</strong> section appears in the
+          left sidebar of Settings with Users, User Groups, OIDC Clients, and Application Configuration.
+        </p>
         <button className="secondary" onClick={refreshAdminLogin}>Create a new admin login</button>
         {error && <p className="error">{error}</p>}
+      </section>
+
+      <section className="panel help-panel">
+        <div>
+          <p className="eyebrow">During the workshop</p>
+          <h2>Help an attendee</h2>
+        </div>
+        <ol className="tips">
+          <li><strong>No Touch ID / Windows Hello?</strong> At the passkey step, choose the option to use a phone and scan the QR code with their personal phone.</li>
+          <li><strong>Passkeys blocked entirely?</strong> Click <strong>Skip for now</strong>. Signup already signed them in, and sessions last 30 days.</li>
+          <li><strong>Signed out, or on a new device, with no passkey?</strong> Enter their username below and send them the one-time link.</li>
+        </ol>
+        <form className="help-form" onSubmit={issueLoginLink}>
+          <input
+            type="text"
+            placeholder="attendee username"
+            value={helpUsername}
+            onChange={(event) => setHelpUsername(event.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          <button className="primary" type="submit" disabled={helping || !helpUsername.trim()}>
+            {helping ? 'Creating…' : 'Create login link'}
+          </button>
+        </form>
+        {helpError && <p className="error">{helpError}</p>}
+        {helpResult && (
+          <div className="secret">
+            <p className="secret-label">One-time login for <code>{helpResult.username}</code></p>
+            <div className="url-box">
+              <code>{helpResult.loginUrl}</code>
+              <button className="secondary" onClick={() => copy(helpResult.loginUrl, 'help')}>{copied === 'help' ? 'Copied' : 'Copy'}</button>
+            </div>
+            <p className="muted small">Works once. Have them open it on the device they will use, then add a passkey under Settings → Account if they can.</p>
+          </div>
+        )}
       </section>
     </div>
   );

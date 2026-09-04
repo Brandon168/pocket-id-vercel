@@ -11,7 +11,7 @@ A disposable passkey-only OIDC provider for a workshop. Deploy it, hand attendee
 3. **On `/setup`, pick the room size and whether attendees must give an email, then click once.** It generates the workshop's secrets and shows you an instructor password one time. Save it.
 4. **Continue to `/workshop`.** At the browser sign-in prompt, leave the username empty and paste the password.
 5. **Click Prepare workshop.** The first run starts Pocket ID (about a minute), then creates the instructor admin, workshop group, OIDC client, and signup capacity.
-6. **Put the QR code on your slide.** Open the one-time admin login in your own browser and add a passkey under Settings → Account.
+6. **Put the QR code on your slide.** Open the one-time admin login in your own browser and add a passkey under Settings → Account. Pocket ID's admin tools (Users, User Groups, OIDC Clients, Application Configuration) appear as an **Administration** section in the Settings sidebar once you are signed in as `instructor`, or directly at `/settings/admin/users`.
 
 Pro or Enterprise is required: the idle cron runs every minute and Sandbox sessions exceed Hobby limits.
 
@@ -35,7 +35,14 @@ Lost the password? Set `WORKSHOP_ADMIN_SECRET` on the Vercel project and redeplo
 
 Pocket ID always requires a username and treats first and last name as optional; only email has a requirement toggle, which `/setup` exposes. After registering a passkey, attendees land on Pocket ID's `/settings/account` page. That destination is hard-coded in Pocket ID's frontend and cannot be changed from the controller.
 
-Signup capacity is `expected attendees × 1.2`, rounded up to whole 100-use signup tokens (Pocket ID's per-token cap). `/join` rotates attendees across them. Tokens expire after 72 hours.
+Signup capacity is `expected attendees × 1.2`, rounded up to whole 100-use signup tokens (Pocket ID's per-token cap). `/join` rotates attendees across them. Tokens expire after 72 hours. The console shows live signup counts while Pocket ID is running.
+
+### Attendees who cannot use a passkey
+
+Passkeys need no app: Touch ID, Face ID, Windows Hello, or Android screen lock all work, and the browser offers a QR code so a personal phone can hold the passkey for a locked-down laptop. For the few who are blocked entirely:
+
+- **Skip for now** at the passkey step. Signup already signed them in, and the controller sets Pocket ID sessions to 30 days, so they stay signed in for the whole event on that device.
+- **Signed out or on another device:** in `/workshop`, type their username under *Help an attendee* and send them the one-time login link. This is Pocket ID's login-code feature, also available in the admin UI under Users.
 
 ## Teardown
 

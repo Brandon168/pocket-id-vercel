@@ -15,6 +15,12 @@ h2 { margin-bottom: 10px; font-size: 24px; letter-spacing: -.025em; }
 .panel { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 28px; box-shadow: 0 1px 2px rgb(0 0 0 / 4%); }
 .setup-panel { max-width: 660px; display: grid; gap: 18px; }
 .console-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 20px; align-items: start; }
+.help-panel { grid-column: 1 / -1; display: grid; gap: 18px; }
+.tips { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; line-height: 1.5; color: var(--fg); }
+.help-form { display: flex; gap: 10px; }
+.help-form input { flex: 1; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; font: 14px var(--font-mono), monospace; }
+.help-form input:focus { outline: 2px solid #000; outline-offset: -1px; }
+dd a { color: var(--blue); text-decoration: none; }
 .panel-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .badge { border-radius: 999px; padding: 5px 10px; background: #eefbee; color: #18794e; white-space: nowrap; font-size: 12px; font-weight: 500; }
 .qr-frame { width: min(100%, 460px); margin: 24px auto; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
@@ -29,7 +35,7 @@ button:disabled { cursor: wait; opacity: .6; }
 .download { display: inline-block; margin-top: 14px; color: var(--blue); font-size: 14px; text-decoration: none; }
 .admin-panel { display: grid; gap: 20px; }
 dl { display: grid; gap: 0; margin: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-dl div { display: grid; grid-template-columns: 120px 1fr; padding: 13px 15px; background: var(--soft); }
+dl div { display: grid; grid-template-columns: 140px 1fr; padding: 13px 15px; background: var(--soft); }
 dl div + div { border-top: 1px solid var(--border); }
 dt { color: var(--muted); font-size: 13px; }
 dd { margin: 0; text-align: right; font-size: 13px; }
@@ -55,4 +61,4 @@ code { font-family: var(--font-mono), monospace; }
 .choice-group .small { margin: 0; }
 .loading { color: var(--muted); }
 footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
-@media (max-width: 760px) { main { width: min(100% - 24px, 620px); padding-top: 32px; } .console-grid { grid-template-columns: 1fr; } .panel { padding: 20px; } header { margin-bottom: 28px; } .mark { display: none; } .url-box { align-items: stretch; flex-direction: column; padding: 12px; } .url-box code { white-space: normal; overflow-wrap: anywhere; } }
+@media (max-width: 760px) { .help-form { flex-direction: column; } main { width: min(100% - 24px, 620px); padding-top: 32px; } .console-grid { grid-template-columns: 1fr; } .panel { padding: 20px; } header { margin-bottom: 28px; } .mark { display: none; } .url-box { align-items: stretch; flex-direction: column; padding: 12px; } .url-box code { white-space: normal; overflow-wrap: anywhere; } }
