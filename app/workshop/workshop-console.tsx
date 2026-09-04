@@ -58,15 +58,31 @@ export function WorkshopConsole() {
     }
   }
 
-  async function refreshAdminLogin() {
+  const [adminLogin, setAdminLogin] = useState<{ loginUrl: string; popupBlocked: boolean } | null>(null);
+  const [openingAdmin, setOpeningAdmin] = useState(false);
+
+  async function openAdmin() {
     setError('');
-    const response = await fetch(`${window.location.origin}/api/workshop/admin-login`, { method: 'POST' });
-    const result = await response.json() as WorkshopSetup & { error?: string };
-    if (!response.ok) {
-      setError(result.error ?? 'Could not create admin login');
-      return;
+    setOpeningAdmin(true);
+    // Open the tab synchronously so popup blockers attribute it to the click,
+    // then point it at the freshly minted link.
+    const tab = window.open('', '_blank');
+    try {
+      const response = await fetch(`${window.location.origin}/api/workshop/admin-login`, { method: 'POST' });
+      const result = await response.json() as { loginUrl?: string; error?: string };
+      if (!response.ok || !result.loginUrl) throw new Error(result.error ?? 'Could not create admin login');
+      if (tab) {
+        tab.location.href = result.loginUrl;
+        setAdminLogin({ loginUrl: result.loginUrl, popupBlocked: false });
+      } else {
+        setAdminLogin({ loginUrl: result.loginUrl, popupBlocked: true });
+      }
+    } catch (cause) {
+      tab?.close();
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setOpeningAdmin(false);
     }
-    setSetup(result);
   }
 
   const [progress, setProgress] = useState<SignupProgress | null>(null);
@@ -182,16 +198,27 @@ export function WorkshopConsole() {
         </div>
         <dl>
           <div><dt>Username</dt><dd><code>{setup.adminUsername}</code></dd></div>
-          <div><dt>Admin: users</dt><dd><a href="/settings/admin/users">/settings/admin/users</a></dd></div>
-          <div><dt>Admin: OIDC clients</dt><dd><a href="/settings/admin/oidc-clients">/settings/admin/oidc-clients</a></dd></div>
+          <div><dt>Admin: users</dt><dd><a href="/settings/admin/users" target="_blank" rel="noreferrer">/settings/admin/users</a></dd></div>
+          <div><dt>Admin: OIDC clients</dt><dd><a href="/settings/admin/oidc-clients" target="_blank" rel="noreferrer">/settings/admin/oidc-clients</a></dd></div>
         </dl>
-        <a className="primary link-button" href={setup.adminLoginUrl}>Open one-time admin login</a>
+        <button className="primary" disabled={openingAdmin} onClick={openAdmin}>
+          {openingAdmin ? 'Signing you in…' : 'Open Pocket ID admin in a new tab'}
+        </button>
         <p className="muted small">
-          Open this once in your instructor browser, then add a passkey under <strong>Settings → Account</strong>.
-          Once signed in as <code>{setup.adminUsername}</code>, an <strong>Administration</strong> section appears in the
-          left sidebar of Settings with Users, User Groups, OIDC Clients, and Application Configuration.
+          Each click creates a fresh one-time sign-in for <code>{setup.adminUsername}</code> and opens the admin
+          Users page. No code to type. Once there, add a passkey under <strong>Settings → Account</strong> so you
+          can sign in normally later. The <strong>Administration</strong> section is in the Settings sidebar.
         </p>
-        <button className="secondary" onClick={refreshAdminLogin}>Create a new admin login</button>
+        {adminLogin && (
+          <div className="secret">
+            <p className="secret-label">{adminLogin.popupBlocked ? 'Your browser blocked the new tab. Open this link instead:' : 'Opened in a new tab. If it did not appear:'}</p>
+            <div className="url-box">
+              <code>{adminLogin.loginUrl}</code>
+              <a className="secondary link-button" href={adminLogin.loginUrl} target="_blank" rel="noreferrer">Open</a>
+            </div>
+            <p className="muted small">Valid for one hour, works once. Click the button again for a new one.</p>
+          </div>
+        )}
         {error && <p className="error">{error}</p>}
       </section>
 
@@ -227,7 +254,7 @@ export function WorkshopConsole() {
               <code>{helpResult.loginUrl}</code>
               <button className="secondary" onClick={() => copy(helpResult.loginUrl, 'help')}>{copied === 'help' ? 'Copied' : 'Copy'}</button>
             </div>
-            <p className="muted small">Works once. Have them open it on the device they will use, then add a passkey under Settings → Account if they can.</p>
+            <p className="muted small">Valid for one hour, works once. Have them open it on the device they will use, then add a passkey under Settings → Account if they can.</p>
           </div>
         )}
       </section>

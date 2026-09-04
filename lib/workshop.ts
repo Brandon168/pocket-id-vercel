@@ -154,12 +154,18 @@ async function addAdminToGroup(origin: string, groupId: string, adminId: string)
   await pause();
 }
 
-async function mintAdminLogin(origin: string, publicOrigin: string, adminId: string): Promise<string> {
-  const { token } = await pocketApi<{ token: string }>(origin, `/users/${adminId}/one-time-access-token`, {
+// One-time login links. Pocket ID issues a 6-character code for TTLs up to
+// 15 minutes and a 12-character code beyond that; /lc/<code> auto-submits
+// either. Links are minted on demand rather than stored, because a stale
+// code fails silently and drops the user on a manual code-entry form.
+export const loginLinkTtl = '1h';
+
+async function mintLoginLink(origin: string, publicOrigin: string, userId: string, redirectPath: string): Promise<string> {
+  const { token } = await pocketApi<{ token: string }>(origin, `/users/${userId}/one-time-access-token`, {
     method: 'POST',
-    body: '{}',
+    body: JSON.stringify({ ttl: loginLinkTtl }),
   });
-  return `${publicOrigin}/lc/${token}`;
+  return `${publicOrigin}/lc/${token}?redirect=${encodeURIComponent(redirectPath)}`;
 }
 
 async function mintSignupTokens(origin: string, groupId: string, tokenCount: number): Promise<string[]> {
@@ -188,7 +194,8 @@ export async function setupWorkshop(requestOrigin: string): Promise<WorkshopSetu
   const group = await ensureGroup(origin);
   await ensureClient(origin, group.id);
   await addAdminToGroup(origin, group.id, admin.id);
-  const adminLoginUrl = await mintAdminLogin(origin, publicOrigin, admin.id);
+  // Stored for schema compatibility only; the console mints a fresh link on demand.
+  const adminLoginUrl = await mintLoginLink(origin, publicOrigin, admin.id, '/settings/admin/users');
   await pause();
   const signupTokens = await mintSignupTokens(origin, group.id, tokenCount);
   const setup: WorkshopSetup = {
@@ -204,13 +211,16 @@ export async function setupWorkshop(requestOrigin: string): Promise<WorkshopSetu
   return setup;
 }
 
-export async function refreshAdminLogin(requestOrigin: string): Promise<WorkshopSetup> {
+export type AdminLogin = { loginUrl: string; ttl: string };
+
+// Mints a fresh admin login and lands the instructor on the admin users page.
+export async function refreshAdminLogin(requestOrigin: string): Promise<AdminLogin> {
   const setup = await getWorkshopSetup(workshopName);
   if (!setup) throw new Error('Workshop has not been set up');
   const origin = await getKnownSandboxOrigin();
-  const adminLoginUrl = await mintAdminLogin(origin, appUrl(requestOrigin), setup.adminId);
-  await updateAdminLoginUrl(workshopName, adminLoginUrl);
-  return { ...setup, adminLoginUrl };
+  const loginUrl = await mintLoginLink(origin, appUrl(requestOrigin), setup.adminId, '/settings/admin/users');
+  await updateAdminLoginUrl(workshopName, loginUrl);
+  return { loginUrl, ttl: loginLinkTtl };
 }
 
 export type AttendeeLogin = {
@@ -236,7 +246,7 @@ export async function issueAttendeeLogin(requestOrigin: string, rawUsername: str
   );
   const user = found.data?.find((candidate) => candidate.username.toLowerCase() === username);
   if (!user) throw new AttendeeNotFoundError(rawUsername);
-  const loginUrl = await mintAdminLogin(origin, appUrl(requestOrigin), user.id);
+  const loginUrl = await mintLoginLink(origin, appUrl(requestOrigin), user.id, '/settings/account');
   return { username: user.username, displayName: user.displayName?.trim() || user.username, loginUrl };
 }
 

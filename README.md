@@ -11,7 +11,7 @@ A disposable passkey-only OIDC provider for a workshop. Deploy it, hand attendee
 3. **On `/setup`, pick the room size and whether attendees must give an email, then click once.** It generates the workshop's secrets and shows you an instructor password one time. Save it.
 4. **Continue to `/workshop`.** At the browser sign-in prompt, leave the username empty and paste the password.
 5. **Click Prepare workshop.** The first run starts Pocket ID (about a minute), then creates the instructor admin, workshop group, OIDC client, and signup capacity.
-6. **Put the QR code on your slide.** Open the one-time admin login in your own browser and add a passkey under Settings → Account. Pocket ID's admin tools (Users, User Groups, OIDC Clients, Application Configuration) appear as an **Administration** section in the Settings sidebar once you are signed in as `instructor`, or directly at `/settings/admin/users`.
+6. **Put the QR code on your slide.** Click **Open Pocket ID admin in a new tab**; it signs you in as `instructor` with a fresh one-time code (no code to type) and lands on the admin Users page. Add a passkey under Settings → Account so you can sign in normally afterwards. Pocket ID's admin tools (Users, User Groups, OIDC Clients, Application Configuration) appear as an **Administration** section in the Settings sidebar once you are signed in as `instructor`, or directly at `/settings/admin/users`.
 
 Pro or Enterprise is required: the idle cron runs every minute and Sandbox sessions exceed Hobby limits.
 
