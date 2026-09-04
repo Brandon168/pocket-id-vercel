@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request): Promise<Response> {
-  if (!isWorkshopAdmin(request)) return workshopUnauthorized();
+  if (!(await isWorkshopAdmin(request))) return workshopUnauthorized();
   try {
     return Response.json(await getWorkshopSetup(getWorkshopName()), {
       headers: { 'cache-control': 'no-store' },

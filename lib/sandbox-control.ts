@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { Sandbox } from '@vercel/sandbox';
+import { requireSecrets } from './secrets';
 import {
   acquireLifecycleLease,
   getLifecycleState,
@@ -52,18 +53,18 @@ async function deleteStoppedActorHost(): Promise<void> {
 }
 
 
-function pocketEnvironment(origin: string): string {
-  const required = ['DATABASE_URL_UNPOOLED', 'ENCRYPTION_KEY', 'STATIC_API_KEY'] as const;
-  const values: Record<string, string> = {};
-  for (const name of required) {
-    const value = process.env[name];
-    if (!value) throw new Error(`${name} is required`);
-    values[name] = value;
-  }
+async function pocketEnvironment(origin: string): Promise<string> {
+  const connectionString = process.env.DATABASE_URL_UNPOOLED;
+  if (!connectionString) throw new Error('DATABASE_URL_UNPOOLED is required');
+  const secrets = await requireSecrets();
+  const values: Record<string, string> = {
+    ENCRYPTION_KEY: secrets.encryptionKey,
+    STATIC_API_KEY: secrets.staticApiKey,
+  };
   const productionOrigin = process.env.APP_URL
     ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : origin);
   Object.assign(values, {
-    DB_CONNECTION_STRING: values.DATABASE_URL_UNPOOLED,
+    DB_CONNECTION_STRING: connectionString,
     APP_URL: productionOrigin,
     APP_ENV: 'production',
     PORT: String(sandboxPort),
@@ -76,7 +77,8 @@ function pocketEnvironment(origin: string): string {
     VERSION_CHECK_DISABLED: 'true',
 
     LOG_JSON: 'true',
-    DISABLE_RATE_LIMITING: process.env.DISABLE_RATE_LIMITING ?? 'true',
+    // Hundreds of attendees share conference NAT addresses.
+    DISABLE_RATE_LIMITING: 'true',
   });
   return Object.entries(values)
     .map(([key, value]) => `export ${key}='${value.replaceAll("'", "'\\''")}'`)
@@ -84,7 +86,7 @@ function pocketEnvironment(origin: string): string {
 }
 
 async function startPocketId(sandbox: Sandbox, origin: string): Promise<void> {
-  const encodedEnvironment = new TextEncoder().encode(pocketEnvironment(origin));
+  const encodedEnvironment = new TextEncoder().encode(await pocketEnvironment(origin));
   await sandbox.writeFiles([
     { path: '/tmp/pocket-env.sh', content: encodedEnvironment, mode: 0o600 },
   ]);
@@ -121,7 +123,7 @@ async function waitForHealth(origin: string): Promise<void> {
 }
 
 async function resumeAsLeaseOwner(owner: string): Promise<string> {
-  const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 30);
+  const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 120);
   const requiredMs = (idleMinutes + 5) * 60_000;
   const sandbox = await Sandbox.getOrCreate({
     name: sandboxName,
@@ -203,7 +205,7 @@ export async function ensureSandboxReady(): Promise<string> {
 }
 
 export async function stopIfIdle(): Promise<'kept' | 'stopped'> {
-  const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 30);
+  const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 120);
   const state = await getLifecycleState(sandboxName);
   if (state.status !== 'running') return 'kept';
 

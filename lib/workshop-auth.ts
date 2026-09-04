@@ -1,21 +1,13 @@
-import { timingSafeEqual } from 'node:crypto';
+import { verifyAdminSecret } from './secrets';
 
-function secret(): string | undefined {
-  return process.env.WORKSHOP_ADMIN_SECRET;
-}
-
-export function isWorkshopAdmin(request: Request | Headers): boolean {
-  const expected = secret();
-  if (!expected) return false;
+export async function isWorkshopAdmin(request: Request | Headers): Promise<boolean> {
   const headers = request instanceof Headers ? request : request.headers;
   const authorization = headers.get('authorization');
   if (!authorization?.startsWith('Basic ')) return false;
   try {
     const decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8');
     const supplied = decoded.slice(decoded.indexOf(':') + 1);
-    const suppliedBuffer = Buffer.from(supplied);
-    const expectedBuffer = Buffer.from(expected);
-    return suppliedBuffer.length === expectedBuffer.length && timingSafeEqual(suppliedBuffer, expectedBuffer);
+    return await verifyAdminSecret(supplied);
   } catch {
     return false;
   }

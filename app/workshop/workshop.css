@@ -35,6 +35,12 @@ dt { color: var(--muted); font-size: 13px; }
 dd { margin: 0; text-align: right; font-size: 13px; }
 code { font-family: var(--font-mono), monospace; }
 .error { margin: 0; color: #e5484d; font-size: 14px; line-height: 1.5; }
+.secret { display: grid; gap: 8px; }
+.secret-label { margin: 0; font-size: 14px; font-weight: 500; }
+.secret .url-box code { white-space: normal; overflow-wrap: anywhere; }
+.acknowledge { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
+.acknowledge input { width: 16px; height: 16px; margin: 0; accent-color: #000; }
+.link-button.disabled { cursor: not-allowed; opacity: .4; }
 .loading { color: var(--muted); }
 footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
 @media (max-width: 760px) { main { width: min(100% - 24px, 620px); padding-top: 32px; } .console-grid { grid-template-columns: 1fr; } .panel { padding: 20px; } header { margin-bottom: 28px; } .mark { display: none; } .url-box { align-items: stretch; flex-direction: column; padding: 12px; } .url-box code { white-space: normal; overflow-wrap: anywhere; } }

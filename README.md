@@ -4,7 +4,9 @@ Run the upstream [Pocket ID](https://github.com/pocket-id/pocket-id) passkey-onl
 
 This is a workshop sidecar: provision it for an event, let it idle to zero, then remove the Sandbox, identity database, and controller state.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel&project-name=idp-ws-DATE-TOPIC&repository-name=idp-ws-DATE-TOPIC&env=ENCRYPTION_KEY%2CSTATIC_API_KEY%2CWORKSHOP_ADMIN_SECRET%2CDISABLE_RATE_LIMITING%2CSANDBOX_IDLE_MINUTES&envDefaults=%7B%22DISABLE_RATE_LIMITING%22%3A%22true%22%2C%22SANDBOX_IDLE_MINUTES%22%3A%22120%22%7D&envDescription=Enter%20three%20random%20secrets.%20The%20workshop%20console%20creates%20everything%20else.%20Save%20ENCRYPTION_KEY%20until%20the%20workshop%20is%20deleted.&envLink=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel%23environment-variables&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FBrandon168%2Fpocket-id-vercel&project-name=idp-ws-DATE-TOPIC&repository-name=idp-ws-DATE-TOPIC&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D)
+
+> **As soon as the deployment is Ready, open it.** The first visit to any URL on the new project lands on a one-time `/setup` screen that generates the workshop's secrets and shows you the instructor password once. There are no environment variables to type. Until setup runs, the first person to open the URL owns the workshop, so do it right after deploying.
 
 ## Architecture
 
@@ -52,13 +54,29 @@ Treat the current template as workshop infrastructure under test until that run 
 
 ## Lifecycle
 
-- `SANDBOX_IDLE_MINUTES` defaults to 30 in code. The Deploy Button sets it to 120 for workshop pauses.
+- `SANDBOX_IDLE_MINUTES` defaults to 120 so the Sandbox stays warm through workshop pauses. Lower it with an environment variable if shorter pauses are acceptable.
 - The controller creates the Sandbox with a session timeout of `idle + 5 minutes` and extends that timeout when resuming a session near expiry.
 - Stop sends SIGTERM, waits 12 seconds for Pocket ID and francis, removes the stopped host's database row, then stops the persistent Sandbox. This cleanup prevents the stale 90-second host slot from blocking restart.
 - The next request acquires the Neon-backed startup lease, creates or resumes the named Sandbox, writes current environment variables into `/tmp/pocket-env.sh`, starts Pocket ID, waits for `/healthz`, and proxies the original request.
 - Concurrent startup requests wait on that distributed lease and reuse the same Sandbox origin. Fluid compute can run controller invocations concurrently without starting a second Pocket ID process.
 - Lifecycle state uses `CONTROLLER_DATABASE_URL` when set and otherwise uses the Neon-provided `DATABASE_URL`.
 - The controller hostname is Pocket ID's `APP_URL`, OIDC issuer, and WebAuthn RP ID. Users never see the `sb-*.vercel.run` origin.
+
+## First-run setup and secrets
+
+The Deploy Button asks for nothing beyond a project name and the Neon store. On the first visit to the new deployment, every path redirects to `/setup`, where one click generates three secrets and stores them in the workshop's Neon database:
+
+| Secret | Purpose | Who sees it |
+|---|---|---|
+| Pocket ID encryption key | Protects Pocket ID's stored private keys. Lives with the database it protects for the workshop's lifetime. | Nobody. Generated and consumed by the controller. |
+| Pocket ID API key | Server-side provisioning from the instructor console. | Shown once on `/setup`; only needed if you use `setup.sh`. |
+| Instructor password | Basic-auth password for `/workshop` (any username). Stored as a hash. | Shown once on `/setup`. Save it. |
+
+The claim is atomic: exactly one visitor can complete setup, and after that `/setup` redirects to `/workshop` forever. If `/setup` reports that someone else already completed it, delete the project and Neon resource and deploy again.
+
+This trades the wizard's three text boxes for a short window between "Ready" and your first visit during which the URL is unclaimed. For a disposable workshop owned by the deployer, that is an acceptable trade. Open the deployment as soon as it is Ready.
+
+Because the encryption key is stored alongside the data it protects, Pocket ID's at-rest encryption only helps against leaks of the Pocket ID tables without the controller table. Treat the Neon resource as the sensitive asset and delete it after the event.
 
 ## Environment variables
 
@@ -67,30 +85,32 @@ Treat the current template as workshop infrastructure under test until that run 
 | `DATABASE_URL_UNPOOLED` | yes | Pocket ID database; injected by the Neon store created in the wizard. |
 | `DATABASE_URL` | yes | Controller state; injected by the same Neon store. The workshop template intentionally shares one Neon project for minimal setup. |
 | `CONTROLLER_DATABASE_URL` | no | Optional override for a separate controller database. |
-| `ENCRYPTION_KEY` | yes | Random value, at least 16 bytes; stable for this Pocket ID DB. |
-| `STATIC_API_KEY` | yes | Random value, at least 16 characters; used only by server-side workshop provisioning. |
-| `WORKSHOP_ADMIN_SECRET` | yes | Password for the instructor console at `/workshop`. |
+| `ENCRYPTION_KEY` | no | Overrides the generated key. Only for deployments that predate first-run setup or for local development. |
+| `STATIC_API_KEY` | no | Overrides the generated Pocket ID API key. |
+| `WORKSHOP_ADMIN_SECRET` | no | Overrides the generated instructor password. Set this and redeploy if the generated password is lost. |
 | `APP_URL` | no | Exact controller origin. Omit for the standard `.vercel.app` project URL. |
 | `SANDBOX_NAME` | no | Defaults to `pocket-id` within the deployed Vercel project. |
 | `SANDBOX_IMAGE` | no | Optional custom VCR image. By default, first startup downloads and checksum-verifies Pocket ID v2.14.0 in a persistent Vercel-managed Sandbox. |
-| `SANDBOX_IDLE_MINUTES` | no | Wizard default 120 for long workshop pauses. |
+| `SANDBOX_IDLE_MINUTES` | no | Default 120 for long workshop pauses. |
 | `SANDBOX_STARTUP_TIMEOUT_MS` | no | Default 60,000. |
-| `DISABLE_RATE_LIMITING` | no | Wizard default `true` for conference NAT. |
 | `LIFECYCLE_ADMIN_SECRET` | no | Only required for manual `POST /api/lifecycle/stop`. |
 | `CRON_SECRET` | recommended | Vercel supplies this bearer value to cron calls. |
+
+When all three of `ENCRYPTION_KEY`, `STATIC_API_KEY`, and `WORKSHOP_ADMIN_SECRET` are set, the first-run gate is skipped entirely. Pocket ID rate limiting is always disabled because hundreds of attendees share conference NAT addresses.
 
 ## Deploy
 
 1. Click **Deploy with Vercel** above and choose a project and repository name. Use Pro or Enterprise: the one-minute idle cron does not deploy on Hobby, and Hobby Sandbox sessions cannot exceed 45 minutes.
-2. In the wizard, create the Neon store and enter three random values: `ENCRYPTION_KEY`, `STATIC_API_KEY`, and `WORKSHOP_ADMIN_SECRET`. Leave the two defaults unchanged.
-3. Wait for the deployment to become Ready. The first workshop request creates the named persistent Sandbox and downloads the pinned Pocket ID binary automatically.
-4. Turn off Deployment Protection for the production deployment. OIDC back-channel clients cannot complete Vercel Authentication.
-5. Open `https://<project>.vercel.app/workshop`. Enter any username and use `WORKSHOP_ADMIN_SECRET` as the password in the browser prompt.
-6. Click **Prepare workshop**. It creates the instructor admin, workshop group, fixed public PKCE client, and ten 100-use signup tokens valid for three days.
-7. Put the displayed QR code or `/join` URL on the workshop slide. The stable link distributes requests across signup tokens with a combined limit of 1,000 completed signups.
-8. Open the displayed one-time admin login in the instructor browser, add a passkey under **Settings → Account**, then use **Settings → Administration** for Pocket ID's built-in admin tools.
+2. In the wizard, create the Neon store. There are no environment variables to fill in.
+3. When the deployment is Ready, open it immediately. Any URL redirects to `/setup`.
+4. Click **Set up this workshop**. Copy the instructor password into your password manager, tick the confirmation, and continue.
+5. Turn off Deployment Protection for the production deployment. OIDC back-channel clients cannot complete Vercel Authentication.
+6. At `https://<project>.vercel.app/workshop`, enter any username and the instructor password in the browser prompt.
+7. Click **Prepare workshop**. The first request creates the named persistent Sandbox, downloads the pinned Pocket ID binary, then creates the instructor admin, workshop group, fixed public PKCE client, and ten 100-use signup tokens valid for three days.
+8. Put the displayed QR code or `/join` URL on the workshop slide. The stable link distributes requests across signup tokens with a combined limit of 1,000 completed signups.
+9. Open the displayed one-time admin login in the instructor browser, add a passkey under **Settings → Account**, then use **Settings → Administration** for Pocket ID's built-in admin tools.
 
-`setup.sh` remains available for custom headcounts, durations, usernames, or client settings; the default workshop path needs no shell.
+`setup.sh` remains available for custom headcounts, durations, usernames, or client settings; it needs the Pocket ID API key shown on `/setup`. The default workshop path needs no shell.
 
 ## Operations
 
@@ -106,7 +126,7 @@ curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
 curl https://<project>.vercel.app/login
 ```
 
-A stopped Sandbox does not accrue provisioned-memory usage, but its retained snapshot uses snapshot storage. The Deploy Button's 120-minute idle setting requires Pro or Enterprise and keeps the Sandbox available through workshop pauses; lower it after testing if shorter pauses are acceptable. Vercel Functions run the controller only when requests or the idle cron execute.
+A stopped Sandbox does not accrue provisioned-memory usage, but its retained snapshot uses snapshot storage. The 120-minute idle default requires Pro or Enterprise and keeps the Sandbox available through workshop pauses; lower it after testing if shorter pauses are acceptable. Vercel Functions run the controller only when requests or the idle cron execute.
 
 ## Teardown
 
@@ -122,8 +142,11 @@ Run `teardown.sh` to remove the Neon resource and project. Marketplace resources
 
 - `app/[[...path]]/route.ts` — stable public reverse proxy; buffers request/response bodies and rewrites upstream redirects.
 - `app/api/lifecycle/{idle,status,stop}/route.ts` — cron, status, manual stop.
+- `proxy.ts` — first-run gate (everything redirects to `/setup` until secrets exist) and Basic-auth guard for `/workshop`.
+- `app/setup` and `app/api/setup` — one-time secret generation shown to the first visitor.
 - `app/workshop` and `app/api/workshop` — password-protected one-click instructor console, slide QR, and admin handoff.
 - `app/join/route.ts` — stable attendee URL distributed across ten 100-use signup tokens.
+- `lib/secrets.ts` — Neon-backed generated secrets with environment-variable overrides and an atomic single-winner claim.
 - `lib/workshop{,-store,-auth}.ts` — provisioning, controller-DB persistence, and instructor access checks.
 - `lib/lifecycle-store.ts` — Neon state and expiring distributed lifecycle lease.
 - `lib/sandbox-control.ts` — resume/start/readiness/session-extension/graceful-stop state machine.

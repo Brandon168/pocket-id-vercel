@@ -16,7 +16,7 @@ const hopByHopHeaders: Record<string, true> = {
   host: true,
 };
 
-const controllerPaths = ['/workshop', '/join', '/api/workshop', '/api/lifecycle'];
+const controllerPaths = ['/setup', '/workshop', '/join', '/api/setup', '/api/workshop', '/api/lifecycle'];
 
 function isControllerPath(pathname: string): boolean {
   return controllerPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));

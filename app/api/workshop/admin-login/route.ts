@@ -6,7 +6,7 @@ export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request): Promise<Response> {
-  if (!isWorkshopAdmin(request)) return workshopUnauthorized();
+  if (!(await isWorkshopAdmin(request))) return workshopUnauthorized();
   try {
     return Response.json(await refreshAdminLogin(new URL(request.url).origin), {
       headers: { 'cache-control': 'no-store' },

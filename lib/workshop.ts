@@ -1,4 +1,5 @@
 import { getKnownSandboxOrigin } from './sandbox-control';
+import { requireSecrets } from './secrets';
 import {
   getWorkshopSetup,
   saveWorkshopSetup,
@@ -24,8 +25,7 @@ function appUrl(requestOrigin: string): string {
 }
 
 async function pocketApi<T>(origin: string, path: string, init?: RequestInit): Promise<T> {
-  const key = process.env.STATIC_API_KEY;
-  if (!key) throw new Error('STATIC_API_KEY is required');
+  const { staticApiKey: key } = await requireSecrets();
   const response = await fetch(`${origin}/api${path}`, {
     ...init,
     cache: 'no-store',
