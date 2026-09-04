@@ -162,20 +162,29 @@ async function addAdminToGroup(origin: string, groupId: string, adminId: string)
 // The canonical /login/alternative/code URL is used instead of the /lc/<code>
 // alias: the alias performs a client-side 307 that races the page's own
 // post-login navigation, leaving the user signed in but stuck on the form.
+// Always over 15 minutes: Pocket ID's code page only accepts the 12-character
+// format unless emailed login codes are enabled, so 6-character codes cannot
+// be typed in at /lc in this configuration.
 export const loginLinkTtl = '1h';
 
-export type LoginLink = { code: string; loginUrl: string; codeEntryUrl: string };
+export type LoginLink = { code: string; loginUrl: string; codeEntryUrl: string; ttl: string };
 
-async function mintLoginLink(origin: string, publicOrigin: string, userId: string, redirectPath: string): Promise<LoginLink> {
+async function mintLoginLink(
+  origin: string,
+  publicOrigin: string,
+  userId: string,
+  redirectPath: string,
+  ttl: string = loginLinkTtl,
+): Promise<LoginLink> {
   const { token } = await pocketApi<{ token: string }>(origin, `/users/${userId}/one-time-access-token`, {
     method: 'POST',
-    body: JSON.stringify({ ttl: loginLinkTtl }),
+    body: JSON.stringify({ ttl }),
   });
   const url = new URL('/login/alternative/code', publicOrigin);
   url.searchParams.set('code', token);
   url.searchParams.set('redirect', redirectPath);
   // /lc is Pocket ID's short alias for the manual code-entry page.
-  return { code: token, loginUrl: url.toString(), codeEntryUrl: `${publicOrigin}/lc` };
+  return { code: token, loginUrl: url.toString(), codeEntryUrl: `${publicOrigin}/lc`, ttl };
 }
 
 async function mintSignupTokens(origin: string, groupId: string, tokenCount: number): Promise<string[]> {
@@ -294,11 +303,14 @@ export type Attendee = {
 };
 
 export type AttendeePage = {
+  idle: false;
   attendees: Attendee[];
   page: number;
   totalPages: number;
   totalItems: number;
 };
+
+export type AttendeesIdle = { idle: true };
 
 type PaginationInfo = { totalPages?: number; totalItems?: number; currentPage?: number };
 const attendeePageSize = 25;
@@ -329,7 +341,12 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
 }
 
 // Lists non-admin users (attendees), newest first, with passkey status.
-export async function listAttendees(search: string, page: number): Promise<AttendeePage> {
+// Does not wake a stopped Sandbox unless asked to.
+export async function listAttendees(search: string, page: number, wake: boolean): Promise<AttendeePage | AttendeesIdle> {
+  if (!wake) {
+    const state = await getLifecycleState(workshopName);
+    if (state.status !== 'running') return { idle: true };
+  }
   const origin = await getKnownSandboxOrigin();
   const params = new URLSearchParams({
     'pagination[page]': String(Math.max(1, page)),
@@ -343,6 +360,7 @@ export async function listAttendees(search: string, page: number): Promise<Atten
   const users = listed.data ?? [];
   const passkeys = await mapWithConcurrency(users, passkeyLookupConcurrency, (user) => hasPasskey(origin, user.id));
   return {
+    idle: false,
     attendees: users.map((user, index) => ({
       id: user.id,
       username: user.username,

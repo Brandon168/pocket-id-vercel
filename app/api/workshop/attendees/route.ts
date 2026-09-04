@@ -11,7 +11,8 @@ export async function GET(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const search = url.searchParams.get('search') ?? '';
     const page = Number(url.searchParams.get('page') ?? '1') || 1;
-    return Response.json(await listAttendees(search, page), { headers: { 'cache-control': 'no-store' } });
+    const wake = url.searchParams.get('wake') === '1';
+    return Response.json(await listAttendees(search, page, wake), { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     console.error('Attendee list failed', error);
     return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });

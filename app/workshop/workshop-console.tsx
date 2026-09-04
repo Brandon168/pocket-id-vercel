@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 type WorkshopSetup = {
   adminUsername: string;
@@ -11,9 +11,10 @@ type WorkshopSetup = {
 };
 
 type SignupProgress = { used: number; capacity: number; sandboxRunning: boolean };
-type AttendeeLogin = { username: string; displayName: string; code: string; loginUrl: string; codeEntryUrl: string };
+type AttendeeLogin = { username: string; displayName: string; code: string; loginUrl: string; codeEntryUrl: string; ttl: string };
 type Attendee = { id: string; username: string; displayName: string; email: string | null; disabled: boolean; hasPasskey: boolean | null };
-type AttendeePage = { attendees: Attendee[]; page: number; totalPages: number; totalItems: number };
+type AttendeePage = { idle: false; attendees: Attendee[]; page: number; totalPages: number; totalItems: number };
+type AttendeesIdle = { idle: true };
 
 type WorkshopStatus = {
   setup: WorkshopSetup | null;
@@ -88,11 +89,13 @@ export function WorkshopConsole() {
   }
 
   const [progress, setProgress] = useState<SignupProgress | null>(null);
-  const [helpResult, setHelpResult] = useState<AttendeeLogin | null>(null);
-  const [helpError, setHelpError] = useState('');
+  // Inline result keyed by attendee id so it renders under the row that was clicked.
+  const [helpResult, setHelpResult] = useState<{ attendeeId: string; login: AttendeeLogin } | null>(null);
+  const [helpError, setHelpError] = useState<{ attendeeId: string; message: string } | null>(null);
   const [helpingId, setHelpingId] = useState('');
   const [search, setSearch] = useState('');
   const [attendeePage, setAttendeePage] = useState<AttendeePage | null>(null);
+  const [attendeesIdle, setAttendeesIdle] = useState(false);
   const [attendeesLoading, setAttendeesLoading] = useState(false);
   const [attendeesError, setAttendeesError] = useState('');
 
@@ -108,19 +111,25 @@ export function WorkshopConsole() {
       }
     }
     void poll();
-    const timer = setInterval(poll, 15_000);
+    const timer = setInterval(poll, 60_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [setup]);
 
-  async function loadAttendees(page = 1, term = search) {
+  async function loadAttendees(page = 1, term = search, wake = false) {
     setAttendeesLoading(true);
     setAttendeesError('');
     try {
       const params = new URLSearchParams({ page: String(page) });
       if (term.trim()) params.set('search', term.trim());
+      if (wake) params.set('wake', '1');
       const response = await fetch(`${window.location.origin}/api/workshop/attendees?${params}`, { cache: 'no-store' });
-      const result = await response.json() as AttendeePage & { error?: string };
+      const result = await response.json() as (AttendeePage | AttendeesIdle) & { error?: string };
       if (!response.ok) throw new Error(result.error ?? 'Could not load attendees');
+      if (result.idle) {
+        setAttendeesIdle(true);
+        return;
+      }
+      setAttendeesIdle(false);
       setAttendeePage(result);
     } catch (cause) {
       setAttendeesError(cause instanceof Error ? cause.message : String(cause));
@@ -129,17 +138,24 @@ export function WorkshopConsole() {
     }
   }
 
-  // Debounced search; the initial load happens once setup exists.
+  // Initial load once setup exists; never wakes an idle Sandbox by itself.
   useEffect(() => {
     if (!setup) return;
-    const timer = setTimeout(() => { void loadAttendees(1, search); }, search ? 300 : 0);
+    void loadAttendees(1, '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setup]);
+
+  // Debounced search, only while a list is showing.
+  useEffect(() => {
+    if (!setup || attendeesIdle || !attendeePage) return;
+    const timer = setTimeout(() => { void loadAttendees(1, search); }, 300);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setup, search]);
+  }, [search]);
 
   async function issueLoginLink(attendee: Attendee) {
     setHelpingId(attendee.id);
-    setHelpError('');
+    setHelpError(null);
     setHelpResult(null);
     try {
       const response = await fetch(`${window.location.origin}/api/workshop/login-link`, {
@@ -149,9 +165,9 @@ export function WorkshopConsole() {
       });
       const result = await response.json() as AttendeeLogin & { error?: string };
       if (!response.ok) throw new Error(result.error ?? 'Could not create login code');
-      setHelpResult(result);
+      setHelpResult({ attendeeId: attendee.id, login: result });
     } catch (cause) {
-      setHelpError(cause instanceof Error ? cause.message : String(cause));
+      setHelpError({ attendeeId: attendee.id, message: cause instanceof Error ? cause.message : String(cause) });
     } finally {
       setHelpingId('');
     }
@@ -262,75 +278,110 @@ export function WorkshopConsole() {
         <ol className="tips">
           <li><strong>No Touch ID / Windows Hello?</strong> At the passkey step they can pick &quot;use a phone&quot; and scan the QR with a personal phone.</li>
           <li><strong>Passkeys blocked entirely?</strong> <strong>Skip for now</strong> keeps them signed in for 30 days on that device.</li>
-          <li><strong>Signed out, or on another device, with no passkey?</strong> Find them below and create a login code. Read it out or send it; it works once and lasts an hour.</li>
+          <li><strong>Signed out, or on another device, with no passkey?</strong> Find them below and click <strong>Login code</strong>. A one-time code appears under their row; send them the link or have them type the code. Works once, lasts an hour.</li>
         </ol>
 
-        {helpResult && (
-          <div className="code-card">
-            <div>
-              <p className="secret-label">Login code for <code>{helpResult.username}</code></p>
-              <p className="big-code">{helpResult.code}</p>
-              <p className="muted small">
-                Have them open <code>{helpResult.codeEntryUrl.replace(/^https?:\/\//, '')}</code> and type the code, or send the full link.
-              </p>
-            </div>
-            <div className="code-actions">
-              <button className="secondary" onClick={() => copy(helpResult.code, 'code')}>{copied === 'code' ? 'Copied' : 'Copy code'}</button>
-              <button className="secondary" onClick={() => copy(helpResult.loginUrl, 'link')}>{copied === 'link' ? 'Copied' : 'Copy link'}</button>
-              <button className="secondary" onClick={() => setHelpResult(null)}>Dismiss</button>
-            </div>
+        <div className="list-toolbar">
+          <input
+            className="search"
+            type="search"
+            placeholder="Search by username, name, or email"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            disabled={attendeesIdle}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          <button
+            className="secondary"
+            disabled={attendeesLoading || attendeesIdle}
+            onClick={() => loadAttendees(attendeePage?.page ?? 1, search)}
+          >
+            {attendeesLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
+        {attendeesError && <p className="error">{attendeesError}</p>}
+
+        {attendeesIdle && (
+          <div className="idle-notice">
+            <p className="muted">Pocket ID is idle, so the attendee list is not loaded. Nothing here runs in the background.</p>
+            <button className="secondary" disabled={attendeesLoading} onClick={() => loadAttendees(1, search, true)}>
+              {attendeesLoading ? 'Waking Pocket ID…' : 'Wake Pocket ID and load attendees'}
+            </button>
           </div>
         )}
-        {helpError && <p className="error">{helpError}</p>}
 
-        <input
-          className="search"
-          type="search"
-          placeholder="Search by username, name, or email"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-        />
-        {attendeesError && <p className="error">{attendeesError}</p>}
-        {attendeePage && attendeePage.attendees.length === 0 && !attendeesLoading && (
+        {!attendeesIdle && attendeePage && attendeePage.attendees.length === 0 && !attendeesLoading && (
           <p className="muted small">{search ? 'No attendees match that search.' : 'No attendees have registered yet.'}</p>
         )}
-        {attendeePage && attendeePage.attendees.length > 0 && (
+        {!attendeesIdle && attendeePage && attendeePage.attendees.length > 0 && (
           <table className={`attendees${attendeesLoading ? ' stale' : ''}`}>
             <thead>
               <tr><th>Username</th><th>Name</th><th>Email</th><th>Passkey</th><th></th></tr>
             </thead>
             <tbody>
-              {attendeePage.attendees.map((attendee) => (
-                <tr key={attendee.id} className={attendee.hasPasskey === false ? 'needs-help' : ''}>
-                  <td><code>{attendee.username}</code></td>
-                  <td>{attendee.displayName !== attendee.username ? attendee.displayName : <span className="muted">—</span>}</td>
-                  <td>{attendee.email ?? <span className="muted">—</span>}</td>
-                  <td>
-                    {attendee.hasPasskey === true && <span className="pill ok">Yes</span>}
-                    {attendee.hasPasskey === false && <span className="pill warn">None</span>}
-                    {attendee.hasPasskey === null && <span className="pill">Unknown</span>}
-                  </td>
-                  <td className="row-action">
-                    <button className="secondary" disabled={helpingId === attendee.id} onClick={() => issueLoginLink(attendee)}>
-                      {helpingId === attendee.id ? 'Creating…' : 'Login code'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {attendeePage.attendees.map((attendee) => {
+                const login = helpResult?.attendeeId === attendee.id ? helpResult.login : null;
+                const rowError = helpError?.attendeeId === attendee.id ? helpError.message : '';
+                const expanded = Boolean(login || rowError);
+                return (
+                  <Fragment key={attendee.id}>
+                    <tr className={`${attendee.hasPasskey === false ? 'needs-help' : ''}${expanded ? ' expanded' : ''}`}>
+                      <td><code>{attendee.username}</code></td>
+                      <td>{attendee.displayName !== attendee.username ? attendee.displayName : <span className="muted">—</span>}</td>
+                      <td>{attendee.email ?? <span className="muted">—</span>}</td>
+                      <td>
+                        {attendee.hasPasskey === true && <span className="pill ok">Yes</span>}
+                        {attendee.hasPasskey === false && <span className="pill warn">None</span>}
+                        {attendee.hasPasskey === null && <span className="pill">Unknown</span>}
+                      </td>
+                      <td className="row-action">
+                        {expanded ? (
+                          <button className="secondary" onClick={() => { setHelpResult(null); setHelpError(null); }}>Close</button>
+                        ) : (
+                          <button className="secondary" disabled={helpingId === attendee.id} onClick={() => issueLoginLink(attendee)}>
+                            {helpingId === attendee.id ? 'Creating…' : 'Login code'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expanded && (
+                      <tr className="detail-row">
+                        <td colSpan={5}>
+                          {rowError && <p className="error">{rowError}</p>}
+                          {login && (
+                            <div className="code-inline">
+                              <div>
+                                <p className="big-code">{login.code}</p>
+                                <p className="muted small">
+                                  For <strong>{login.displayName}</strong>. Send them the link, or have them open{' '}
+                                  <code>{login.codeEntryUrl.replace(/^https?:\/\//, '')}</code> and type the code. Valid one hour, works once.
+                                </p>
+                              </div>
+                              <div className="code-actions">
+                                <button className="secondary" onClick={() => copy(login.code, `code-${attendee.id}`)}>{copied === `code-${attendee.id}` ? 'Copied' : 'Copy code'}</button>
+                                <button className="secondary" onClick={() => copy(login.loginUrl, `link-${attendee.id}`)}>{copied === `link-${attendee.id}` ? 'Copied' : 'Copy link'}</button>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
-        {attendeePage && attendeePage.totalPages > 1 && (
+        {!attendeesIdle && attendeePage && attendeePage.totalPages > 1 && (
           <div className="pager">
             <button className="secondary" disabled={attendeePage.page <= 1 || attendeesLoading} onClick={() => loadAttendees(attendeePage.page - 1)}>Previous</button>
             <span className="muted small">Page {attendeePage.page} of {attendeePage.totalPages}</span>
             <button className="secondary" disabled={attendeePage.page >= attendeePage.totalPages || attendeesLoading} onClick={() => loadAttendees(attendeePage.page + 1)}>Next</button>
           </div>
         )}
-        <p className="muted small">Listing attendees wakes Pocket ID if it is idle. Admin accounts are hidden.</p>
+        <p className="muted small">The list only updates when you refresh. Admin accounts are hidden.</p>
       </section>
     </div>
   );
