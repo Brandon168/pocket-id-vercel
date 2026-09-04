@@ -98,6 +98,7 @@ export function WorkshopConsole() {
   const [attendeesIdle, setAttendeesIdle] = useState(false);
   const [attendeesLoading, setAttendeesLoading] = useState(false);
   const [attendeesError, setAttendeesError] = useState('');
+  const [onlyWithoutPasskey, setOnlyWithoutPasskey] = useState(false);
 
   useEffect(() => {
     if (!setup) return;
@@ -278,7 +279,8 @@ export function WorkshopConsole() {
         <ol className="tips">
           <li><strong>No Touch ID / Windows Hello?</strong> At the passkey step they can pick &quot;use a phone&quot; and scan the QR with a personal phone.</li>
           <li><strong>Passkeys blocked entirely?</strong> <strong>Skip for now</strong> keeps them signed in for 30 days on that device.</li>
-          <li><strong>Signed out, or on another device, with no passkey?</strong> Find them below and click <strong>Login code</strong>. A one-time code appears under their row; send them the link or have them type the code. Works once, lasts an hour.</li>
+          <li><strong>Signed out, or on another device, with no passkey?</strong> Ask for their username (it is on their Settings → Account page if they are still signed in anywhere), find them below, and click <strong>Login code</strong>. Send the link or have them type the code. Works once, lasts an hour.</li>
+          <li><strong>Tip for your signup slide:</strong> ask attendees to use <code>firstname-lastname</code> as their username. Name and email are optional in Pocket ID, so the username is how you will find people.</li>
         </ol>
 
         <div className="list-toolbar">
@@ -293,6 +295,10 @@ export function WorkshopConsole() {
             autoCorrect="off"
             spellCheck={false}
           />
+          <label className="filter-toggle">
+            <input type="checkbox" checked={onlyWithoutPasskey} disabled={attendeesIdle} onChange={(event) => setOnlyWithoutPasskey(event.target.checked)} />
+            No passkey only
+          </label>
           <button
             className="secondary"
             disabled={attendeesLoading || attendeesIdle}
@@ -321,7 +327,7 @@ export function WorkshopConsole() {
               <tr><th>Username</th><th>Name</th><th>Email</th><th>Passkey</th><th></th></tr>
             </thead>
             <tbody>
-              {attendeePage.attendees.map((attendee) => {
+              {attendeePage.attendees.filter((attendee) => !onlyWithoutPasskey || attendee.hasPasskey !== true).map((attendee) => {
                 const login = helpResult?.attendeeId === attendee.id ? helpResult.login : null;
                 const rowError = helpError?.attendeeId === attendee.id ? helpError.message : '';
                 const expanded = Boolean(login || rowError);

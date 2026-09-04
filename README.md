@@ -33,7 +33,7 @@ Lost the password? Set `WORKSHOP_ADMIN_SECRET` on the Vercel project and redeplo
 
 ## Attendee signup
 
-Pocket ID always requires a username and treats first and last name as optional; only email has a requirement toggle, which `/setup` exposes. After registering a passkey, attendees land on Pocket ID's `/settings/account` page. That destination is hard-coded in Pocket ID's frontend and cannot be changed from the controller.
+Pocket ID always requires a username and treats first and last name as optional; only email has a requirement toggle, which `/setup` exposes. Because the username is the only guaranteed identifier, tell attendees on the signup slide to use `firstname-lastname`; that is how you will find them in the console if they need help. After registering a passkey, attendees land on Pocket ID's `/settings/account` page. That destination is hard-coded in Pocket ID's frontend and cannot be changed from the controller.
 
 Signup capacity is `expected attendees × 1.2`, rounded up to whole 100-use signup tokens (Pocket ID's per-token cap). `/join` rotates attendees across them. Tokens expire after 72 hours. The console shows live signup counts while Pocket ID is running.
 

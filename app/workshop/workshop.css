@@ -21,6 +21,8 @@ h2 { margin-bottom: 10px; font-size: 24px; letter-spacing: -.025em; }
 .search:focus { outline: 2px solid #000; outline-offset: -1px; }
 .list-toolbar { display: flex; gap: 10px; }
 .list-toolbar .search { flex: 1; }
+.filter-toggle { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 14px; cursor: pointer; }
+.filter-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #000; }
 .idle-notice { display: grid; gap: 12px; justify-items: start; padding: 16px 18px; border: 1px dashed var(--border); border-radius: 10px; }
 .idle-notice p { margin: 0; }
 .attendees tr.expanded td { border-bottom: 0; background: #f5f5f5; }
