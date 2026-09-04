@@ -1,18 +1,33 @@
 import { getKnownSandboxOrigin } from './sandbox-control';
 import { requireSecrets } from './secrets';
 import {
+  getWorkshopOptions,
   getWorkshopSetup,
   saveWorkshopSetup,
   updateAdminLoginUrl,
+  type WorkshopOptions,
   type WorkshopSetup,
 } from './workshop-store';
 
 const workshopName = process.env.SANDBOX_NAME ?? 'pocket-id';
-const capacity = 1_000;
-const tokenCount = 10;
+// Pocket ID caps one signup token at 100 uses (signupTokenCreateDto: max=100).
 const tokenUsageLimit = 100;
+const headroom = 1.2;
 const tokenTtl = '72h';
-const mutationDelayMs = Number(process.env.WORKSHOP_SETUP_DELAY_MS ?? 6_000);
+// Calls are strictly serial against one Pocket ID process; the gap only exists
+// as a safety margin. Admin API rate limiting is 100 req/s and disabled anyway.
+const mutationDelayMs = Number(process.env.WORKSHOP_SETUP_DELAY_MS ?? 1_000);
+
+export function signupTokenCount(expectedAttendees: number): number {
+  return Math.max(1, Math.ceil((expectedAttendees * headroom) / tokenUsageLimit));
+}
+
+export function estimateSetupSeconds(expectedAttendees: number): number {
+  // Eight fixed mutations plus one per token, each followed by a pause,
+  // plus the API round trips themselves.
+  const mutations = 8 + signupTokenCount(expectedAttendees);
+  return Math.ceil((mutations * (mutationDelayMs + 400)) / 1000);
+}
 
 function sleep(milliseconds: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -48,12 +63,14 @@ type Paginated<T> = { data?: T[] };
 type User = { id: string; username: string; isAdmin: boolean };
 type Group = { id: string; name: string; users?: Array<{ id: string }> };
 
-async function configureSignups(origin: string): Promise<void> {
+async function configureSignups(origin: string, options: WorkshopOptions): Promise<void> {
   const all = await pocketApi<Array<{ key: string; value: string }>>(origin, '/application-configuration/all');
   const configuration = Object.fromEntries(all.map(({ key, value }) => [key, value]));
   Object.assign(configuration, {
     allowUserSignups: 'withToken',
-    requireUserEmail: 'false',
+    // Pocket ID only exposes a requirement toggle for email. First and last
+    // name are always optional in its signup DTO.
+    requireUserEmail: options.requireEmail ? 'true' : 'false',
     emailsVerified: 'false',
     emailVerificationEnabled: 'false',
   });
@@ -142,7 +159,7 @@ async function mintAdminLogin(origin: string, publicOrigin: string, adminId: str
   return `${publicOrigin}/lc/${token}`;
 }
 
-async function mintSignupTokens(origin: string, groupId: string): Promise<string[]> {
+async function mintSignupTokens(origin: string, groupId: string, tokenCount: number): Promise<string[]> {
   const tokens: string[] = [];
   for (let index = 0; index < tokenCount; index += 1) {
     const result = await pocketApi<{ token: string }>(origin, '/signup-tokens', {
@@ -159,23 +176,25 @@ export async function setupWorkshop(requestOrigin: string): Promise<WorkshopSetu
   const existing = await getWorkshopSetup(workshopName);
   if (existing) return existing;
 
+  const options = await getWorkshopOptions(workshopName);
+  const tokenCount = signupTokenCount(options.expectedAttendees);
   const origin = await getKnownSandboxOrigin();
   const publicOrigin = appUrl(requestOrigin);
-  await configureSignups(origin);
+  await configureSignups(origin, options);
   const admin = await ensureAdmin(origin);
   const group = await ensureGroup(origin);
   await ensureClient(origin, group.id);
   await addAdminToGroup(origin, group.id, admin.id);
   const adminLoginUrl = await mintAdminLogin(origin, publicOrigin, admin.id);
   await pause();
-  const signupTokens = await mintSignupTokens(origin, group.id);
+  const signupTokens = await mintSignupTokens(origin, group.id, tokenCount);
   const setup: WorkshopSetup = {
     adminId: admin.id,
     adminUsername: admin.username,
     adminLoginUrl,
     joinUrl: `${publicOrigin}/join`,
     signupTokens,
-    capacity,
+    capacity: tokenCount * tokenUsageLimit,
     expiresAt: new Date(Date.now() + 72 * 60 * 60_000),
   };
   await saveWorkshopSetup(workshopName, setup);

@@ -10,8 +10,15 @@ type WorkshopSetup = {
   expiresAt: string;
 };
 
+type WorkshopStatus = {
+  setup: WorkshopSetup | null;
+  options: { expectedAttendees: number; requireEmail: boolean };
+  plan: { tokenCount: number; capacity: number; estimatedSeconds: number };
+};
+
 export function WorkshopConsole() {
   const [setup, setSetup] = useState<WorkshopSetup | null>(null);
+  const [status, setStatus] = useState<WorkshopStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -21,7 +28,9 @@ export function WorkshopConsole() {
     try {
       const response = await fetch(`${window.location.origin}/api/workshop`, { cache: 'no-store' });
       if (!response.ok) throw new Error('Could not load workshop setup');
-      setSetup(await response.json() as WorkshopSetup | null);
+      const result = await response.json() as WorkshopStatus;
+      setStatus(result);
+      setSetup(result.setup);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -66,18 +75,30 @@ export function WorkshopConsole() {
   if (loading) return <div className="panel loading">Loading workshop…</div>;
 
   if (!setup) {
+    const capacity = status?.plan.capacity ?? 0;
+    const attendees = status?.options.expectedAttendees ?? 0;
+    const seconds = status?.plan.estimatedSeconds ?? 0;
     return (
       <div className="panel setup-panel">
         <div>
           <p className="eyebrow">One-click setup</p>
           <h2>Prepare this workshop</h2>
-          <p className="muted">Creates the instructor admin, workshop group, OIDC client, and signup capacity for 1,000 attendees. Links expire after three days.</p>
+          <p className="muted">
+            Creates the instructor admin, workshop group, OIDC client, and signup capacity for{' '}
+            {capacity.toLocaleString()} attendees ({attendees.toLocaleString()} expected plus headroom).
+            {status?.options.requireEmail ? ' Attendees must provide an email.' : ' Email is optional at signup.'}
+            {' '}Links expire after three days.
+          </p>
         </div>
         {error && <p className="error">{error}</p>}
         <button className="primary" disabled={creating} onClick={createWorkshop}>
           {creating ? 'Preparing workshop…' : 'Prepare workshop'}
         </button>
-        {creating && <p className="muted small">This takes about 90 seconds while Pocket ID creates ten signup pools serially.</p>}
+        {creating && (
+          <p className="muted small">
+            First run also starts Pocket ID (up to a minute). Provisioning itself takes about {seconds} seconds.
+          </p>
+        )}
       </div>
     );
   }
@@ -99,7 +120,9 @@ export function WorkshopConsole() {
           <button className="secondary" onClick={() => copy(setup.joinUrl, 'join')}>{copied === 'join' ? 'Copied' : 'Copy URL'}</button>
         </div>
         <a className="download" href={`${qrUrl}&download=1`}>Download QR code</a>
-        <p className="muted small">One stable URL distributes attendees across ten 100-use signup pools.</p>
+        <p className="muted small">
+          One stable URL distributes attendees across {status?.plan.tokenCount ?? 1} signup pool{(status?.plan.tokenCount ?? 1) === 1 ? '' : 's'} of 100 uses each.
+        </p>
       </section>
 
       <section className="panel admin-panel">

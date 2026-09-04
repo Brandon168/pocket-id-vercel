@@ -41,6 +41,18 @@ code { font-family: var(--font-mono), monospace; }
 .acknowledge { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
 .acknowledge input { width: 16px; height: 16px; margin: 0; accent-color: #000; }
 .link-button.disabled { cursor: not-allowed; opacity: .4; }
+.callout { border: 1px solid #d3e5ff; border-radius: 10px; background: #f0f7ff; padding: 14px 16px; }
+.callout p { margin: 0; font-size: 14px; line-height: 1.55; color: #0a2540; }
+.advanced summary { cursor: pointer; font-size: 14px; font-weight: 500; }
+.advanced[open] summary { margin-bottom: 10px; }
+.advanced .small { margin: 8px 0 0; }
+.choice-group { margin: 0; padding: 0; border: 0; display: grid; gap: 10px; }
+.choice-group legend { padding: 0; margin-bottom: 4px; font-size: 14px; font-weight: 500; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.choice { display: grid; place-items: center; min-width: 72px; min-height: 40px; padding: 0 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 14px; cursor: pointer; }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+.choice.selected { border-color: #000; background: #000; color: #fff; }
+.choice-group .small { margin: 0; }
 .loading { color: var(--muted); }
 footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
 @media (max-width: 760px) { main { width: min(100% - 24px, 620px); padding-top: 32px; } .console-grid { grid-template-columns: 1fr; } .panel { padding: 20px; } header { margin-bottom: 28px; } .mark { display: none; } .url-box { align-items: stretch; flex-direction: column; padding: 12px; } .url-box code { white-space: normal; overflow-wrap: anywhere; } }

@@ -10,6 +10,16 @@ export type WorkshopSetup = {
   expiresAt: Date;
 };
 
+export type WorkshopOptions = {
+  expectedAttendees: number;
+  requireEmail: boolean;
+};
+
+export const defaultWorkshopOptions: WorkshopOptions = {
+  expectedAttendees: 100,
+  requireEmail: false,
+};
+
 let sqlClient: NeonQueryFunction<false, false> | null = null;
 
 function workshopSql() {
@@ -78,6 +88,40 @@ export async function updateAdminLoginUrl(name: string, adminLoginUrl: string): 
     UPDATE pocket_id_workshop_setup
     SET admin_login_url = ${adminLoginUrl}, updated_at = now()
     WHERE name = ${name}
+  `;
+}
+
+async function initializeWorkshopOptions(): Promise<void> {
+  await workshopSql()`
+    CREATE TABLE IF NOT EXISTS pocket_id_workshop_options (
+      name text PRIMARY KEY,
+      expected_attendees integer NOT NULL,
+      require_email boolean NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+}
+
+export async function getWorkshopOptions(name: string): Promise<WorkshopOptions> {
+  await initializeWorkshopOptions();
+  const rows = await workshopSql()`SELECT * FROM pocket_id_workshop_options WHERE name = ${name}`;
+  if (!rows.length) return defaultWorkshopOptions;
+  const row = rows[0] as Record<string, unknown>;
+  return {
+    expectedAttendees: Number(row.expected_attendees),
+    requireEmail: Boolean(row.require_email),
+  };
+}
+
+export async function saveWorkshopOptions(name: string, options: WorkshopOptions): Promise<void> {
+  await initializeWorkshopOptions();
+  await workshopSql()`
+    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email)
+    VALUES (${name}, ${options.expectedAttendees}, ${options.requireEmail})
+    ON CONFLICT (name) DO UPDATE SET
+      expected_attendees = EXCLUDED.expected_attendees,
+      require_email = EXCLUDED.require_email,
+      updated_at = now()
   `;
 }
 

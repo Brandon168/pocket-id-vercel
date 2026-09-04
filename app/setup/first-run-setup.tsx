@@ -13,7 +13,11 @@ type Conflict = {
   createdAt: string | null;
 };
 
+const attendeeChoices = [50, 100, 250, 500, 1000];
+
 export function FirstRunSetup() {
+  const [expectedAttendees, setExpectedAttendees] = useState(100);
+  const [requireEmail, setRequireEmail] = useState(false);
   const [claimed, setClaimed] = useState<Claimed | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [working, setWorking] = useState(false);
@@ -25,7 +29,11 @@ export function FirstRunSetup() {
     setWorking(true);
     setError('');
     try {
-      const response = await fetch(`${window.location.origin}/api/setup`, { method: 'POST' });
+      const response = await fetch(`${window.location.origin}/api/setup`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedAttendees, requireEmail }),
+      });
       const result = await response.json() as Claimed | Conflict | { error?: string };
       if (response.status === 409 && 'error' in result && result.error === 'already_set_up') {
         setConflict(result as Conflict);
@@ -67,16 +75,16 @@ export function FirstRunSetup() {
     return (
       <div className="panel setup-panel">
         <div>
-          <p className="eyebrow">Save these now</p>
-          <h2>Your instructor credentials</h2>
+          <p className="eyebrow">Save this now</p>
+          <h2>Your instructor password</h2>
           <p className="muted">
-            These are shown once and are not stored anywhere you can read them later. Copy the password
-            into your password manager before leaving this page.
+            Shown once and not stored anywhere you can read it later. Copy it into your password manager
+            before leaving this page.
           </p>
         </div>
 
         <div className="secret">
-          <p className="secret-label">Instructor password <span className="muted small">— for <code>/workshop</code>; any username</span></p>
+          <p className="secret-label">Instructor password</p>
           <div className="url-box">
             <code>{claimed.adminSecret}</code>
             <button className="secondary" onClick={() => copy(claimed.adminSecret, 'password')}>
@@ -85,15 +93,23 @@ export function FirstRunSetup() {
           </div>
         </div>
 
-        <div className="secret">
-          <p className="secret-label">Pocket ID API key <span className="muted small">— only needed for <code>setup.sh</code>; the console does not use it</span></p>
+        <div className="callout">
+          <p>
+            <strong>How to sign in:</strong> the next page shows your browser&apos;s sign-in prompt.
+            Leave the username empty (or type anything) and paste this password. Only the password is checked.
+          </p>
+        </div>
+
+        <details className="advanced">
+          <summary>Pocket ID API key (only for <code>setup.sh</code>)</summary>
           <div className="url-box">
             <code>{claimed.staticApiKey}</code>
             <button className="secondary" onClick={() => copy(claimed.staticApiKey, 'apikey')}>
               {copied === 'apikey' ? 'Copied' : 'Copy'}
             </button>
           </div>
-        </div>
+          <p className="muted small">The instructor console does not need this. Skip it unless you plan to run the CLI provisioner.</p>
+        </details>
 
         <label className="acknowledge">
           <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />
@@ -119,12 +135,40 @@ export function FirstRunSetup() {
     <div className="panel setup-panel">
       <div>
         <p className="eyebrow">First run</p>
-        <h2>Generate workshop secrets</h2>
+        <h2>Set up this workshop</h2>
         <p className="muted">
-          Creates the Pocket ID encryption key, its API key, and a random instructor password, and stores them
-          in this workshop&apos;s Neon database. Nothing else is needed from you.
+          Two quick choices, then one click generates the secrets this workshop needs and stores them in its
+          Neon database. You will get an instructor password to save.
         </p>
       </div>
+
+      <fieldset className="choice-group">
+        <legend>How many attendees?</legend>
+        <div className="choices">
+          {attendeeChoices.map((count) => (
+            <label key={count} className={`choice${expectedAttendees === count ? ' selected' : ''}`}>
+              <input
+                type="radio"
+                name="attendees"
+                value={count}
+                checked={expectedAttendees === count}
+                onChange={() => setExpectedAttendees(count)}
+              />
+              {count.toLocaleString()}
+            </label>
+          ))}
+        </div>
+        <p className="muted small">Sets signup capacity with 20% headroom. Larger rooms take a little longer to prepare.</p>
+      </fieldset>
+
+      <label className="acknowledge">
+        <input type="checkbox" checked={requireEmail} onChange={(event) => setRequireEmail(event.target.checked)} />
+        Require an email address at signup
+      </label>
+      <p className="muted small">
+        Username is always required; first and last name are always optional. Pocket ID has no setting to change that.
+      </p>
+
       {error && <p className="error">{error}</p>}
       <button className="primary" disabled={working} onClick={claim}>
         {working ? 'Generating…' : 'Set up this workshop'}
