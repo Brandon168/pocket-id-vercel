@@ -62,7 +62,7 @@ The controller uses `https://<project>.vercel.app` as Pocket ID's `APP_URL`, OID
 
 ## Vercel team mode: connecting the team
 
-After **Prepare workshop**, the console shows a **Vercel team** panel with three numbered steps. Everything you need to paste is there, with copy buttons.
+After **Prepare workshop**, the console shows a **Vercel team** panel with four numbered steps. Everything you need to paste is there, with copy buttons. For the screen-by-screen version with screenshots of every Vercel dialog, an Entra ID cheat sheet, and troubleshooting, see [docs/vercel-team-setup.md](docs/vercel-team-setup.md).
 
 **On the Vercel team** (you must be an Owner): Settings → Security & Privacy → Authentication and User Provisioning. Vercel enforces this order; the console's Vercel team panel shows the same four steps with copy buttons.
 
