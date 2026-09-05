@@ -7,6 +7,7 @@ export type OptionsDraft = {
   requireEmail: boolean;
   mode: WorkshopMode;
   emailDomain: string;
+  ownerEmail: string;
 };
 
 export const attendeeChoices = [50, 100, 250, 500, 1000];
@@ -16,6 +17,7 @@ export const defaultDraft: OptionsDraft = {
   requireEmail: false,
   mode: 'app',
   emailDomain: '',
+  ownerEmail: '',
 };
 
 export function OptionsForm({ value, onChange, disabled }: {
@@ -60,6 +62,24 @@ export function OptionsForm({ value, onChange, disabled }: {
             onChange={(event) => set({ emailDomain: event.target.value })}
           />
           <span className="muted small">Every attendee is registered as <code>username@{value.emailDomain || 'domain'}</code>, whatever they type. Enterprise Managed Users only accepts addresses on a domain the team has verified; nothing is ever emailed.</span>
+        </label>
+      )}
+
+      {value.mode === 'vercel-team' && (
+        <label className="field">
+          <span className="field-label">Your Vercel login email <span className="muted">(recommended)</span></span>
+          <input
+            className="search"
+            type="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="you@company.com"
+            value={value.ownerEmail}
+            disabled={disabled}
+            onChange={(event) => set({ ownerEmail: event.target.value })}
+          />
+          <span className="muted small">Directory Sync matches people by email. With yours here, your existing account stays Owner and the SAML re-authentication Vercel asks for succeeds. Leave blank to create a separate managed Owner, <code>instructor@{value.emailDomain || 'domain'}</code>, instead.</span>
         </label>
       )}
 

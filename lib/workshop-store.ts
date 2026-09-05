@@ -25,6 +25,10 @@ export type WorkshopOptions = {
   // Required in vercel-team mode: every attendee's email is forced to this
   // domain because Enterprise Managed Users only accepts a verified domain.
   emailDomain: string | null;
+  // Vercel team mode: the instructor's Vercel login email. Directory Sync
+  // matches by email, so this is what keeps the existing Owner an Owner and
+  // lets Re-Authenticate succeed. Null means instructor@<domain>.
+  ownerEmail: string | null;
 };
 
 export const defaultWorkshopOptions: WorkshopOptions = {
@@ -32,6 +36,7 @@ export const defaultWorkshopOptions: WorkshopOptions = {
   requireEmail: false,
   mode: 'app',
   emailDomain: null,
+  ownerEmail: null,
 };
 
 // Pocket ID side of the Vercel connection. The secret is stored so the
@@ -136,6 +141,7 @@ async function initializeWorkshopOptions(): Promise<void> {
   await sql`ALTER TABLE pocket_id_workshop_options ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'app'`;
   await sql`ALTER TABLE pocket_id_workshop_options ADD COLUMN IF NOT EXISTS email_domain text`;
   await sql`ALTER TABLE pocket_id_workshop_options ADD COLUMN IF NOT EXISTS prepare_started_at timestamptz`;
+  await sql`ALTER TABLE pocket_id_workshop_options ADD COLUMN IF NOT EXISTS owner_email text`;
 }
 
 // Prepare runs from /setup automatically and from the console on demand.
@@ -146,8 +152,8 @@ const prepareLeaseMinutes = 5;
 export async function acquirePrepareLease(name: string): Promise<boolean> {
   await initializeWorkshopOptions();
   const rows = await workshopSql()`
-    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email, mode, email_domain, prepare_started_at)
-    VALUES (${name}, ${defaultWorkshopOptions.expectedAttendees}, ${defaultWorkshopOptions.requireEmail}, ${defaultWorkshopOptions.mode}, ${defaultWorkshopOptions.emailDomain}, now())
+    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email, mode, email_domain, owner_email, prepare_started_at)
+    VALUES (${name}, ${defaultWorkshopOptions.expectedAttendees}, ${defaultWorkshopOptions.requireEmail}, ${defaultWorkshopOptions.mode}, ${defaultWorkshopOptions.emailDomain}, ${defaultWorkshopOptions.ownerEmail}, now())
     ON CONFLICT (name) DO UPDATE SET prepare_started_at = now()
     WHERE pocket_id_workshop_options.prepare_started_at IS NULL
        OR pocket_id_workshop_options.prepare_started_at < now() - make_interval(mins => ${prepareLeaseMinutes})
@@ -181,19 +187,21 @@ export async function getWorkshopOptions(name: string): Promise<WorkshopOptions>
     requireEmail: Boolean(row.require_email),
     mode: row.mode === 'vercel-team' ? 'vercel-team' : 'app',
     emailDomain: row.email_domain ? String(row.email_domain) : null,
+    ownerEmail: row.owner_email ? String(row.owner_email) : null,
   };
 }
 
 export async function saveWorkshopOptions(name: string, options: WorkshopOptions): Promise<void> {
   await initializeWorkshopOptions();
   await workshopSql()`
-    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email, mode, email_domain)
-    VALUES (${name}, ${options.expectedAttendees}, ${options.requireEmail}, ${options.mode}, ${options.emailDomain})
+    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email, mode, email_domain, owner_email)
+    VALUES (${name}, ${options.expectedAttendees}, ${options.requireEmail}, ${options.mode}, ${options.emailDomain}, ${options.ownerEmail})
     ON CONFLICT (name) DO UPDATE SET
       expected_attendees = EXCLUDED.expected_attendees,
       require_email = EXCLUDED.require_email,
       mode = EXCLUDED.mode,
       email_domain = EXCLUDED.email_domain,
+      owner_email = EXCLUDED.owner_email,
       updated_at = now()
   `;
 }

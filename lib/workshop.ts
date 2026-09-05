@@ -124,7 +124,7 @@ async function ensureAdmin(origin: string): Promise<User> {
   }
   const created = await pocketApi<User>(origin, '/users', {
     method: 'POST',
-    body: JSON.stringify({ username, firstName: 'Instructor', isAdmin: true }),
+    body: JSON.stringify({ username, firstName: 'Workshop', lastName: 'Instructor', isAdmin: true }),
   });
   await pause();
   return created;
@@ -278,7 +278,7 @@ export function vercelSignInUrl(teamSlug: string | null): string {
 
 const vercelSsoClientBody = (callbackUrl: string, teamSlug: string | null) => ({
   name: 'Vercel',
-  description: 'Vercel team sign-in via SSO (Enterprise Managed Users)',
+  description: 'Sign in to the Vercel team',
   callbackURLs: [callbackUrl],
   logoutCallbackURLs: [],
   isPublic: false,
@@ -344,8 +344,8 @@ async function setInstructorEmail(origin: string, admin: User, email: string): P
     method: 'PUT',
     body: JSON.stringify({
       username: admin.username,
-      firstName: admin.firstName || 'Instructor',
-      lastName: admin.lastName ?? '',
+      firstName: admin.firstName || 'Workshop',
+      lastName: admin.lastName || 'Instructor',
       displayName: admin.displayName ?? '',
       email,
       emailVerified: true,
@@ -440,7 +440,7 @@ async function provisionWorkshop(requestOrigin: string): Promise<WorkshopSetup> 
     // Sync never locks the instructor out of the team.
     const ownerGroup = await ensureGroup(origin, vercelOwnerGroupName);
     await addAdminToGroup(origin, ownerGroup.id, admin.id);
-    await setInstructorEmail(origin, admin, defaultInstructorEmail(options.emailDomain ?? ''));
+    await setInstructorEmail(origin, admin, options.ownerEmail ?? defaultInstructorEmail(options.emailDomain ?? ''));
     await ensureVercelSsoClient(origin, [...attendeeGroupIds, ownerGroup.id]);
   } else {
     await ensureAppClient(origin, group.id);
@@ -858,7 +858,7 @@ export async function updateVercelClient(patch: { callbackUrl?: string; teamSlug
 export async function updateInstructorEmail(email: string): Promise<void> {
   await requireVercelMode();
   const trimmed = email.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) throw new InvalidInputError('Enter a full email address');
+  if (!emailPattern.test(trimmed)) throw new InvalidInputError('Enter a full email address');
   const origin = await getKnownSandboxOrigin();
   const found = await pocketApi<Paginated<User>>(origin, '/users?search=instructor&pagination[limit]=5');
   const admin = found.data?.find((user) => user.username === 'instructor');
@@ -915,6 +915,7 @@ export function applySignupNamePolicy(body: string): string {
 }
 
 const domainPattern = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function normalizeEmailDomain(input: unknown): string | null {
   if (typeof input !== 'string') return null;
@@ -935,10 +936,16 @@ export function parseWorkshopOptions(body: unknown): WorkshopOptions {
   if (mode === 'vercel-team' && !emailDomain) {
     throw new InvalidOptionsError('Enter the email domain your Vercel team has verified, for example workshop.example.com');
   }
+  let ownerEmail: string | null = null;
+  if (mode === 'vercel-team' && typeof input.ownerEmail === 'string' && input.ownerEmail.trim()) {
+    ownerEmail = input.ownerEmail.trim().toLowerCase();
+    if (!emailPattern.test(ownerEmail)) throw new InvalidOptionsError('Enter your Vercel login email as a full address, or leave it blank');
+  }
   return {
     expectedAttendees: attendeeChoices.includes(attendees) ? attendees : defaultWorkshopOptions.expectedAttendees,
     requireEmail: mode === 'app' && input.requireEmail === true,
     mode,
     emailDomain,
+    ownerEmail,
   };
 }

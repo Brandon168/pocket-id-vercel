@@ -280,9 +280,9 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
       <div className="callout">
         <p>
           <strong>You will not lock yourself out.</strong> The first sync rewrites every member&apos;s role, including yours. Your <code>instructor</code> identity is
-          pushed too, in <code>{status.ownerGroup}</code>, which Vercel maps to <strong>Owner</strong>. Its email decides which account that is:
-          <code> instructor@{status.emailDomain}</code> (default) becomes a new managed Owner you sign in to through Pocket ID, right for an EMU team.
-          Change it to your own Vercel login email if you want your existing account to stay Owner on a team without EMU.
+          pushed too, in <code>{status.ownerGroup}</code>, which Vercel maps to <strong>Owner</strong>. Its email decides which Vercel account that is. Set it to
+          <strong> your own Vercel login email</strong> so your existing account stays Owner and Vercel&apos;s SAML re-authentication succeeds; this is what the
+          verified run used. <code>instructor@{status.emailDomain}</code> instead creates a separate managed Owner you reach only through Pocket ID.
         </p>
       </div>
 

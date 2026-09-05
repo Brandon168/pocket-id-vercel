@@ -18,7 +18,7 @@ type Attendee = { id: string; username: string; displayName: string; email: stri
 type AttendeePage = { idle: false; attendees: Attendee[]; page: number; totalPages: number; totalItems: number };
 type AttendeesIdle = { idle: true };
 
-type WorkshopOptions = { expectedAttendees: number; requireEmail: boolean; mode: WorkshopMode; emailDomain: string | null };
+type WorkshopOptions = { expectedAttendees: number; requireEmail: boolean; mode: WorkshopMode; emailDomain: string | null; ownerEmail: string | null };
 
 type WorkshopStatus = {
   setup: WorkshopSetup | null;
@@ -28,7 +28,7 @@ type WorkshopStatus = {
 };
 
 function toDraft(options: WorkshopOptions): OptionsDraft {
-  return { ...options, emailDomain: options.emailDomain ?? '' };
+  return { ...options, emailDomain: options.emailDomain ?? '', ownerEmail: options.ownerEmail ?? '' };
 }
 
 export function WorkshopConsole() {
@@ -296,6 +296,7 @@ export function WorkshopConsole() {
         <dl>
           <div><dt>Attendees sign in to</dt><dd>{vercelTeam ? 'A Vercel Enterprise team (SSO + Directory Sync)' : 'An app you are building'}</dd></div>
           {vercelTeam && <div><dt>Email domain</dt><dd><code>{options?.emailDomain}</code></dd></div>}
+          {vercelTeam && <div><dt>Stays Owner</dt><dd><code>{options?.ownerEmail ?? `instructor@${options?.emailDomain}`}</code></dd></div>}
           <div><dt>Room size</dt><dd>{attendees.toLocaleString()} expected · capacity {capacity.toLocaleString()}</dd></div>
         </dl>
         {error && <p className="error">{error}</p>}
