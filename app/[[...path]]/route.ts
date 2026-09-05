@@ -1,7 +1,7 @@
 import { after } from 'next/server';
 import { getKnownSandboxOrigin, invalidateKnownSandboxOrigin, recordProxyActivity } from '@/lib/sandbox-control';
 import { isSetupComplete } from '@/lib/secrets';
-import { applySignupEmailPolicy, autoSyncAfterSignup, getSignupEmailPolicy } from '@/lib/workshop';
+import { applySignupEmailPolicy, applySignupNamePolicy, autoSyncAfterSignup, getSignupEmailPolicy } from '@/lib/workshop';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -33,7 +33,7 @@ async function requestBody(request: Request, pathname: string): Promise<BodyInit
   if (request.method !== 'POST' || pathname !== '/api/signup') return await request.arrayBuffer();
   const policy = await getSignupEmailPolicy().catch(() => null);
   const raw = await request.text();
-  return policy ? applySignupEmailPolicy(raw, policy) : raw;
+  return policy ? applySignupNamePolicy(applySignupEmailPolicy(raw, policy)) : raw;
 }
 
 async function proxy(request: Request): Promise<Response> {

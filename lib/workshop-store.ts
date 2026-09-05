@@ -45,6 +45,9 @@ export type VercelConnection = {
   teamSlug: string | null;
   scimProviderId: string | null;
   scimEndpoint: string | null;
+  // Outcome of the most recent push attempt (manual or automatic).
+  lastSyncError: string | null;
+  lastSyncAttemptAt: Date | null;
   updatedAt: Date;
 };
 
@@ -224,6 +227,17 @@ async function initializeVercelConnection(): Promise<void> {
   `;
   await workshopSql()`ALTER TABLE pocket_id_vercel_connection ADD COLUMN IF NOT EXISTS team_slug text`;
   await workshopSql()`ALTER TABLE pocket_id_vercel_connection ADD COLUMN IF NOT EXISTS last_auto_sync_at timestamptz`;
+  await workshopSql()`ALTER TABLE pocket_id_vercel_connection ADD COLUMN IF NOT EXISTS last_sync_error text`;
+  await workshopSql()`ALTER TABLE pocket_id_vercel_connection ADD COLUMN IF NOT EXISTS last_sync_attempt_at timestamptz`;
+}
+
+export async function recordSyncAttempt(name: string, error: string | null): Promise<void> {
+  await initializeVercelConnection();
+  await workshopSql()`
+    UPDATE pocket_id_vercel_connection
+    SET last_sync_error = ${error}, last_sync_attempt_at = now(), updated_at = now()
+    WHERE name = ${name}
+  `;
 }
 
 // One automatic SCIM push per window; concurrent signups share it.
@@ -248,6 +262,8 @@ function mapConnection(row: Record<string, unknown>): VercelConnection {
     teamSlug: row.team_slug ? String(row.team_slug) : null,
     scimProviderId: row.scim_provider_id ? String(row.scim_provider_id) : null,
     scimEndpoint: row.scim_endpoint ? String(row.scim_endpoint) : null,
+    lastSyncError: row.last_sync_error ? String(row.last_sync_error) : null,
+    lastSyncAttemptAt: row.last_sync_attempt_at ? new Date(String(row.last_sync_attempt_at)) : null,
     updatedAt: new Date(String(row.updated_at)),
   };
 }
@@ -260,7 +276,7 @@ export async function getVercelConnection(name: string): Promise<VercelConnectio
 
 export async function saveVercelConnection(
   name: string,
-  connection: Omit<VercelConnection, 'updatedAt'>,
+  connection: Omit<VercelConnection, 'updatedAt' | 'lastSyncError' | 'lastSyncAttemptAt'>,
 ): Promise<void> {
   await initializeVercelConnection();
   await workshopSql()`

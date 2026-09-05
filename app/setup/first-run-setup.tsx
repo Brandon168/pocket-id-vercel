@@ -42,6 +42,10 @@ export function FirstRunSetup() {
   }
 
   async function claim() {
+    if (draft.mode === 'vercel-team' && !draft.emailDomain.trim()) {
+      setError('Enter the email domain your Vercel team has verified, for example workshop.example.com');
+      return;
+    }
     setWorking(true);
     setError('');
     try {

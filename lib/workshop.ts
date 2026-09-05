@@ -8,6 +8,7 @@ import {
   getVercelConnection,
   getWorkshopOptions,
   getWorkshopSetup,
+  recordSyncAttempt,
   releasePrepareLease,
   saveVercelConnection,
   saveWorkshopSetup,
@@ -150,12 +151,82 @@ async function clientExists(origin: string, clientId: string): Promise<boolean> 
   }
 }
 
+// Pocket ID's client record as returned by GET /oidc/clients/{id}. Only the
+// fields the update DTO accepts are carried over on PUT.
+type PocketClient = {
+  id: string;
+  name: string;
+  description?: string;
+  callbackURLs?: string[];
+  logoutCallbackURLs?: string[];
+  isPublic: boolean;
+  pkceEnabled: boolean;
+  requiresReauthentication?: boolean;
+  requiresPushedAuthorizationRequests?: boolean;
+  skipConsent?: boolean;
+  launchURL?: string | null;
+  isGroupRestricted?: boolean;
+  accessTokenDurationMinutes?: number;
+  refreshTokenDurationMinutes?: number;
+  credentials?: { federatedIdentities?: unknown[] };
+};
+
+function clientUpdateBody(client: PocketClient, overrides: Partial<PocketClient>): Record<string, unknown> {
+  const merged = { ...client, ...overrides };
+  return {
+    name: merged.name,
+    description: merged.description ?? '',
+    callbackURLs: merged.callbackURLs ?? [],
+    logoutCallbackURLs: merged.logoutCallbackURLs ?? [],
+    isPublic: merged.isPublic,
+    pkceEnabled: merged.pkceEnabled,
+    requiresReauthentication: merged.requiresReauthentication ?? false,
+    requiresPushedAuthorizationRequests: merged.requiresPushedAuthorizationRequests ?? false,
+    skipConsent: merged.skipConsent ?? false,
+    launchURL: merged.launchURL ?? null,
+    // Pocket ID only enforces allowed groups when this flag is set.
+    isGroupRestricted: true,
+    accessTokenDurationMinutes: merged.accessTokenDurationMinutes ?? 0,
+    refreshTokenDurationMinutes: merged.refreshTokenDurationMinutes ?? 0,
+    credentials: { federatedIdentities: merged.credentials?.federatedIdentities ?? [] },
+  };
+}
+
+// Updates a client without discarding settings an instructor changed in
+// Pocket ID admin, then re-applies the allowed groups (PUT clears them).
+async function updateClient(origin: string, clientId: string, overrides: Partial<PocketClient>, groupIds: string[]): Promise<void> {
+  const current = await pocketApi<PocketClient>(origin, `/oidc/clients/${clientId}`);
+  await pocketApi(origin, `/oidc/clients/${clientId}`, {
+    method: 'PUT',
+    body: JSON.stringify(clientUpdateBody(current, overrides)),
+  });
+  await pause();
+  await restrictClientToGroups(origin, clientId, groupIds);
+}
+
+// Allowed groups only take effect together with isGroupRestricted; clients
+// created by earlier versions of this template lack the flag, so set it here.
 async function restrictClientToGroups(origin: string, clientId: string, groupIds: string[]): Promise<void> {
+  const current = await pocketApi<PocketClient>(origin, `/oidc/clients/${clientId}`);
+  if (!current.isGroupRestricted) {
+    await pocketApi(origin, `/oidc/clients/${clientId}`, {
+      method: 'PUT',
+      body: JSON.stringify(clientUpdateBody(current, {})),
+    });
+    await pause();
+  }
   await pocketApi(origin, `/oidc/clients/${clientId}/allowed-user-groups`, {
     method: 'PUT',
     body: JSON.stringify({ userGroupIds: groupIds }),
   });
   await pause();
+}
+
+async function attendeeGroupIds(origin: string, mode: WorkshopMode): Promise<string[]> {
+  const names = mode === 'vercel-team' ? [workshopGroupName, vercelMemberGroupName] : [workshopGroupName];
+  const ids: string[] = [];
+  for (const name of names) ids.push((await ensureGroup(origin, name, name === vercelMemberGroupName ? 'Vercel members' : name)).id);
+  return ids;
 }
 
 // App mode: a public PKCE client for whatever the room is building.
@@ -172,6 +243,7 @@ async function ensureAppClient(origin: string, groupId: string): Promise<void> {
         isPublic: true,
         pkceEnabled: true,
         skipConsent: true,
+        isGroupRestricted: true,
       }),
     });
     await pause();
@@ -195,6 +267,7 @@ const vercelSsoClientBody = (callbackUrl: string, teamSlug: string | null) => ({
   isPublic: false,
   pkceEnabled: true,
   skipConsent: true,
+  isGroupRestricted: true,
   launchURL: teamSlug ? vercelSignInUrl(teamSlug) : null,
 });
 
@@ -227,7 +300,7 @@ async function ensureVercelSsoClient(origin: string, groupIds: string[]): Promis
     scimEndpoint: null,
   };
   await saveVercelConnection(workshopName, connection);
-  return { ...connection, updatedAt: new Date() };
+  return { ...connection, lastSyncError: null, lastSyncAttemptAt: null, updatedAt: new Date() };
 }
 
 async function addAdminToGroup(origin: string, groupId: string, adminId: string): Promise<void> {
@@ -530,9 +603,37 @@ export type VercelTeamStatus = {
   emailDomain: string;
   memberGroup: string;
   workshopGroup: string;
-  scim: { endpoint: string; lastSyncedAt: string | null } | null;
+  scim: {
+    endpoint: string;
+    lastSyncedAt: string | null;
+    lastAttemptAt: string | null;
+    // Instructor-readable summary of the most recent failed push, if any.
+    lastError: string | null;
+  } | null;
   sandboxRunning: boolean;
 };
+
+// Thrown for bad instructor input; routes answer 400 instead of 500.
+export class InvalidInputError extends Error {}
+
+// Pocket ID reports SCIM failures as a generic 500; say something useful.
+function describeSyncError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/scim\/service-provider\/[^/]+\/sync returned 5\d\d/.test(message)) {
+    return 'Pocket ID could not complete the push. Check that the SCIM endpoint and bearer token are exactly what Vercel showed, and that Directory Sync is still in setup on the team.';
+  }
+  return message.length > 300 ? `${message.slice(0, 300)}…` : message;
+}
+
+async function runScimSync(origin: string, providerId: string): Promise<void> {
+  try {
+    await pocketApi(origin, `/scim/service-provider/${providerId}/sync`, { method: 'POST' });
+    await recordSyncAttempt(workshopName, null);
+  } catch (error) {
+    await recordSyncAttempt(workshopName, describeSyncError(error)).catch(() => undefined);
+    throw new Error(describeSyncError(error));
+  }
+}
 
 type ScimServiceProvider = { id: string; endpoint: string; token: string; lastSyncedAt: string | null };
 
@@ -550,12 +651,19 @@ export async function getVercelTeamStatus(requestOrigin: string): Promise<Vercel
   const { options, connection } = await requireVercelMode();
   const issuer = appUrl(requestOrigin);
   const state = await getLifecycleState(workshopName);
-  let scim: VercelTeamStatus['scim'] = connection.scimEndpoint ? { endpoint: connection.scimEndpoint, lastSyncedAt: null } : null;
-  if (state.status === 'running' && connection.scimProviderId) {
+  let scim: VercelTeamStatus['scim'] = connection.scimEndpoint
+    ? {
+        endpoint: connection.scimEndpoint,
+        lastSyncedAt: null,
+        lastAttemptAt: connection.lastSyncAttemptAt?.toISOString() ?? null,
+        lastError: connection.lastSyncError,
+      }
+    : null;
+  if (scim && state.status === 'running' && connection.scimProviderId) {
     try {
       const origin = await getKnownSandboxOrigin();
       const provider = await pocketApi<ScimServiceProvider>(origin, `/oidc/clients/${vercelSsoClientId}/scim-service-provider`);
-      scim = { endpoint: provider.endpoint, lastSyncedAt: provider.lastSyncedAt };
+      scim = { ...scim, endpoint: provider.endpoint, lastSyncedAt: provider.lastSyncedAt };
     } catch {
       // Status is decorative; the stored endpoint is still shown.
     }
@@ -586,10 +694,10 @@ export async function connectVercelDirectorySync(endpoint: string, token: string
   try {
     parsed = new URL(trimmedEndpoint);
   } catch {
-    throw new Error('The SCIM endpoint must be a full https:// URL');
+    throw new InvalidInputError('The SCIM endpoint must be a full https:// URL');
   }
-  if (parsed.protocol !== 'https:') throw new Error('The SCIM endpoint must use https');
-  if (!trimmedToken) throw new Error('The SCIM bearer token is required');
+  if (parsed.protocol !== 'https:') throw new InvalidInputError('The SCIM endpoint must use https');
+  if (!trimmedToken) throw new InvalidInputError('The SCIM bearer token is required');
 
   const origin = await getKnownSandboxOrigin();
   const body = JSON.stringify({ endpoint: trimmedEndpoint, token: trimmedToken, oidcClientId: vercelSsoClientId });
@@ -600,15 +708,18 @@ export async function connectVercelDirectorySync(endpoint: string, token: string
     const created = await pocketApi<ScimServiceProvider>(origin, '/scim/service-provider', { method: 'POST', body });
     providerId = created.id;
   }
+  // The endpoint and token are kept even if the first push fails, so the
+  // instructor fixes one thing instead of retyping both; the failure is
+  // reported next to the connection.
   await saveVercelConnection(workshopName, { ...connection, scimProviderId: providerId, scimEndpoint: trimmedEndpoint });
-  await pocketApi(origin, `/scim/service-provider/${providerId}/sync`, { method: 'POST' });
+  await runScimSync(origin, providerId);
 }
 
 export async function syncVercelDirectory(): Promise<void> {
   const { connection } = await requireVercelMode();
-  if (!connection.scimProviderId) throw new Error('Directory Sync is not connected yet');
+  if (!connection.scimProviderId) throw new InvalidInputError('Directory Sync is not connected yet');
   const origin = await getKnownSandboxOrigin();
-  await pocketApi(origin, `/scim/service-provider/${connection.scimProviderId}/sync`, { method: 'POST' });
+  await runScimSync(origin, connection.scimProviderId);
 }
 
 // Called by the proxy after every successful signup in Vercel team mode.
@@ -627,7 +738,7 @@ export async function autoSyncAfterSignup(): Promise<void> {
     await sleep(autoSyncDelayMs);
     if (!(await acquireAutoSyncSlot(workshopName, autoSyncDelayMs / 1000))) return;
     const origin = await getKnownSandboxOrigin();
-    await pocketApi(origin, `/scim/service-provider/${connection.scimProviderId}/sync`, { method: 'POST' });
+    await runScimSync(origin, connection.scimProviderId);
   } catch (error) {
     console.error('Automatic Directory Sync push failed', error);
   }
@@ -659,23 +770,26 @@ export async function updateVercelClient(patch: { callbackUrl?: string; teamSlug
     try {
       parsed = new URL(callbackUrl.replace(/\*/g, 'x'));
     } catch {
-      throw new Error('The redirect URL must be a full https:// URL');
+      throw new InvalidInputError('The redirect URL must be a full https:// URL');
     }
-    if (parsed.protocol !== 'https:') throw new Error('The redirect URL must use https');
+    if (parsed.protocol !== 'https:') throw new InvalidInputError('The redirect URL must use https');
   }
   let teamSlug = connection.teamSlug;
   if (patch.teamSlug !== undefined) {
     const slug = (patch.teamSlug ?? '').trim().toLowerCase();
     if (slug && !/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/.test(slug)) {
-      throw new Error('Enter the team slug as it appears in vercel.com/<slug>');
+      throw new InvalidInputError('Enter the team slug as it appears in vercel.com/<slug>');
     }
     teamSlug = slug || null;
   }
   const origin = await getKnownSandboxOrigin();
-  await pocketApi(origin, `/oidc/clients/${vercelSsoClientId}`, {
-    method: 'PUT',
-    body: JSON.stringify(vercelSsoClientBody(callbackUrl, teamSlug)),
-  });
+  const groupIds = await attendeeGroupIds(origin, 'vercel-team');
+  await updateClient(
+    origin,
+    vercelSsoClientId,
+    { callbackURLs: [callbackUrl], launchURL: teamSlug ? vercelSignInUrl(teamSlug) : null },
+    groupIds,
+  );
   await saveVercelConnection(workshopName, { ...connection, callbackUrl, teamSlug });
 }
 
@@ -708,6 +822,23 @@ export function applySignupEmailPolicy(body: string, policy: { domain: string })
   // Usernames may contain '@' and '.'; keep only what makes a valid local part.
   const local = username.toLowerCase().split('@')[0].replace(/[^a-z0-9._-]/g, '') || 'attendee';
   return JSON.stringify({ ...parsed, email: `${local}${suffix}` });
+}
+
+// Vercel's SSO expects a name claim; attendees who skip both name fields get
+// their username as first name so the account is not blank in Vercel.
+export function applySignupNamePolicy(body: string): string {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return body;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return body;
+  const username = typeof parsed.username === 'string' ? parsed.username.trim() : '';
+  const firstName = typeof parsed.firstName === 'string' ? parsed.firstName.trim() : '';
+  const lastName = typeof parsed.lastName === 'string' ? parsed.lastName.trim() : '';
+  if (!username || firstName || lastName) return body;
+  return JSON.stringify({ ...parsed, firstName: username.slice(0, 50) });
 }
 
 const domainPattern = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;

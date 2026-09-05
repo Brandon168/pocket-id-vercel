@@ -54,6 +54,8 @@ export function OptionsForm({ value, onChange, disabled }: {
             spellCheck={false}
             placeholder="workshop.example.com"
             value={value.emailDomain}
+            required
+            aria-required="true"
             disabled={disabled}
             onChange={(event) => set({ emailDomain: event.target.value })}
           />

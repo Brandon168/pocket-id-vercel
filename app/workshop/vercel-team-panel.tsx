@@ -13,7 +13,7 @@ export type VercelTeamStatus = {
   emailDomain: string;
   memberGroup: string;
   workshopGroup: string;
-  scim: { endpoint: string; lastSyncedAt: string | null } | null;
+  scim: { endpoint: string; lastSyncedAt: string | null; lastAttemptAt: string | null; lastError: string | null } | null;
   sandboxRunning: boolean;
 };
 
@@ -28,7 +28,7 @@ const json = (body: unknown): RequestInit => ({ headers: { 'content-type': 'appl
 
 export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label: string) => void; copied: string }) {
   const [status, setStatus] = useState<VercelTeamStatus | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<{ at: 'load' | 'client' | 'scim'; message: string } | null>(null);
   const [busy, setBusy] = useState('');
   const [showSecret, setShowSecret] = useState(false);
   const [editingCallback, setEditingCallback] = useState(false);
@@ -48,28 +48,30 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
   useEffect(() => {
     api<VercelTeamStatus>('/api/workshop/vercel')
       .then((result) => { apply(result); if (!result.scim) setScimOpen(true); })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+      .catch((cause) => setError({ at: 'load', message: cause instanceof Error ? cause.message : String(cause) }));
   }, []);
 
-  async function run(label: string, action: () => Promise<VercelTeamStatus>) {
+  async function run(label: string, at: 'client' | 'scim', action: () => Promise<VercelTeamStatus>) {
     setBusy(label);
-    setError('');
+    setError(null);
     try {
       apply(await action());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      // A failed push still leaves the connection in place; show the latest state.
+      api<VercelTeamStatus>('/api/workshop/vercel').then(apply).catch(() => undefined);
+      setError({ at, message: cause instanceof Error ? cause.message : String(cause) });
     } finally {
       setBusy('');
     }
   }
 
-  const saveCallback = () => run('callback', async () => {
+  const saveCallback = () => run('callback', 'client', async () => {
     const result = await api<VercelTeamStatus>('/api/workshop/vercel', { method: 'PATCH', ...json({ callbackUrl: callbackDraft }) });
     setEditingCallback(false);
     return result;
   });
 
-  const saveSlug = () => run('slug', async () => {
+  const saveSlug = () => run('slug', 'client', async () => {
     const result = await api<VercelTeamStatus>('/api/workshop/vercel', { method: 'PATCH', ...json({ teamSlug: slugDraft }) });
     setEditingSlug(false);
     return result;
@@ -77,21 +79,21 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
 
   const rotateSecret = () => {
     if (!window.confirm('Issue a new client secret? The old one stops working and you must update it in Vercel.')) return;
-    void run('rotate', async () => {
+    void run('rotate', 'client', async () => {
       const result = await api<VercelTeamStatus>('/api/workshop/vercel', { method: 'PATCH', ...json({ rotateSecret: true }) });
       setShowSecret(true);
       return result;
     });
   };
 
-  const connectScim = () => run('scim', async () => {
+  const connectScim = () => run('scim', 'scim', async () => {
     const result = await api<VercelTeamStatus>('/api/workshop/vercel', { method: 'POST', ...json({ endpoint: scimEndpoint, token: scimToken }) });
     setScimToken('');
     setScimOpen(false);
     return result;
   });
 
-  const syncNow = () => run('sync', () => api<VercelTeamStatus>('/api/workshop/vercel/sync', { method: 'POST' }));
+  const syncNow = () => run('sync', 'scim', () => api<VercelTeamStatus>('/api/workshop/vercel/sync', { method: 'POST' }));
 
   if (!status) {
     return (
@@ -100,12 +102,15 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
           <p className="eyebrow">Vercel team</p>
           <h2>Connect this workshop to Vercel</h2>
         </div>
-        {error ? <p className="error">{error}</p> : <p className="muted">Loading connection…</p>}
+        {error ? <p className="error">{error.message}</p> : <p className="muted">Loading connection…</p>}
       </section>
     );
   }
 
   const lastSynced = status.scim?.lastSyncedAt ? new Date(status.scim.lastSyncedAt).toLocaleString() : null;
+  const lastAttempt = status.scim?.lastAttemptAt ? new Date(status.scim.lastAttemptAt).toLocaleString() : null;
+  const pushFailed = Boolean(status.scim?.lastError);
+  const pinned = !status.callbackUrl.includes('*');
   const copyButton = (value: string, label: string) => (
     <button className="tiny" onClick={() => copy(value, label)}>{copied === label ? 'Copied' : 'Copy'}</button>
   );
@@ -117,8 +122,10 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
           <p className="eyebrow">Vercel team</p>
           <h2>Connect this workshop to Vercel</h2>
         </div>
-        <span className={`badge${status.scim ? '' : ' pending'}`}>
-          {status.scim ? (lastSynced ? `Directory Sync · last push ${lastSynced}` : 'Directory Sync connected') : 'Directory Sync not connected'}
+        <span className={`badge${status.scim && !pushFailed ? '' : ' pending'}`}>
+          {!status.scim && 'Directory Sync not connected'}
+          {status.scim && pushFailed && 'Directory Sync · last push failed'}
+          {status.scim && !pushFailed && (lastSynced ? `Directory Sync · last push ${lastSynced}` : 'Directory Sync connected')}
         </span>
       </div>
 
@@ -135,7 +142,7 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
         <div>
           <dt>Client secret</dt>
           <dd>
-            <code>{showSecret ? status.clientSecret : '•'.repeat(24)}</code>
+            <code>{showSecret ? status.clientSecret : '•'.repeat(status.clientSecret.length)}</code>
             <button className="tiny" onClick={() => setShowSecret((value) => !value)}>{showSecret ? 'Hide' : 'Show'}</button>
             {copyButton(status.clientSecret, 'secret')}
           </dd>
@@ -147,12 +154,12 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
               <>
                 <input className="search inline" value={callbackDraft} onChange={(event) => setCallbackDraft(event.target.value)} spellCheck={false} autoCapitalize="none" />
                 <button className="tiny" disabled={busy === 'callback'} onClick={saveCallback}>{busy === 'callback' ? 'Saving…' : 'Save'}</button>
-                <button className="tiny" onClick={() => { setEditingCallback(false); setCallbackDraft(status.callbackUrl); }}>Cancel</button>
+                <button className="tiny" onClick={() => { setEditingCallback(false); setCallbackDraft(status.callbackUrl); setError(null); }}>Cancel</button>
               </>
             ) : (
               <>
                 <code>{status.callbackUrl}</code>
-                <button className="tiny" onClick={() => setEditingCallback(true)}>Pin exact URL</button>
+                <button className="tiny" onClick={() => setEditingCallback(true)}>{pinned ? 'Change' : 'Pin exact URL'}</button>
               </>
             )}
           </dd>
@@ -164,7 +171,7 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
               <>
                 <input className="search inline" value={slugDraft} onChange={(event) => setSlugDraft(event.target.value)} placeholder="my-workshop-team" spellCheck={false} autoCapitalize="none" />
                 <button className="tiny" disabled={busy === 'slug'} onClick={saveSlug}>{busy === 'slug' ? 'Saving…' : 'Save'}</button>
-                <button className="tiny" onClick={() => { setEditingSlug(false); setSlugDraft(status.teamSlug ?? ''); }}>Cancel</button>
+                <button className="tiny" onClick={() => { setEditingSlug(false); setSlugDraft(status.teamSlug ?? ''); setError(null); }}>Cancel</button>
               </>
             ) : (
               <>
@@ -175,9 +182,12 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
           </dd>
         </div>
       </dl>
+      {error?.at === 'client' && <p className="error">{error.message}</p>}
       <p className="muted small">
-        The wildcard matches every team&apos;s <code>auth.vercel.com/sso/oidc/…/callback</code>; pin the exact URL from the dialog if you prefer.
-        Setting the team slug gives attendees a <strong>Vercel</strong> tile in Pocket ID that opens <code>{status.signInUrl}</code>.
+        {pinned
+          ? <>Only this exact redirect URL is accepted; use Change to go back to the wildcard <code>https://auth.vercel.com/sso/oidc/*/callback</code> if Vercel shows a different one.</>
+          : <>The wildcard matches every team&apos;s <code>auth.vercel.com/sso/oidc/…/callback</code>; pin the exact URL from the dialog if you prefer.</>}
+        {' '}Setting the team slug gives attendees a <strong>Vercel</strong> tile in Pocket ID that opens <code>{status.signInUrl}</code>.
         {' '}<button className="linkish" disabled={busy === 'rotate'} onClick={rotateSecret}>Rotate secret</button> if it ever leaks.
       </p>
 
@@ -186,11 +196,14 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
         <div className="scim-connected">
           <dl>
             <div><dt>SCIM endpoint</dt><dd><code>{status.scim.endpoint}</code></dd></div>
-            <div><dt>Last push</dt><dd>{lastSynced ?? (status.sandboxRunning ? 'Not yet' : 'Unknown while Pocket ID is idle')}</dd></div>
+            <div><dt>Last successful push</dt><dd>{lastSynced ?? (status.sandboxRunning ? 'Not yet' : 'Unknown while Pocket ID is idle')}</dd></div>
+            {pushFailed && <div><dt>Last attempt</dt><dd><span className="pill warn">Failed{lastAttempt ? ` · ${lastAttempt}` : ''}</span></dd></div>}
           </dl>
+          {pushFailed && !error && <p className="error">{status.scim.lastError}</p>}
+          {error?.at === 'scim' && <p className="error">{error.message}</p>}
           <div className="inline-actions">
             <button className="secondary" disabled={busy === 'sync'} onClick={syncNow}>{busy === 'sync' ? 'Pushing…' : 'Sync now'}</button>
-            <button className="secondary" onClick={() => { setScimEndpoint(status.scim?.endpoint ?? ''); setScimOpen(true); }}>Replace endpoint or token</button>
+            <button className="secondary" onClick={() => { setScimEndpoint(status.scim?.endpoint ?? ''); setScimOpen(true); setError(null); }}>Replace endpoint or token</button>
           </div>
           <p className="muted small">
             Every signup is pushed to Vercel automatically about 15 seconds later (bursts share one push), and Pocket ID re-syncs hourly.
@@ -208,9 +221,10 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
             <span className="field-label">Bearer token</span>
             <input className="search" type="password" value={scimToken} onChange={(event) => setScimToken(event.target.value)} placeholder="se_…" autoComplete="off" />
           </label>
+          {error?.at === 'scim' && <p className="error">{error.message}</p>}
           <div className="inline-actions">
             <button className="primary" disabled={busy === 'scim' || !scimEndpoint || !scimToken} onClick={connectScim}>{busy === 'scim' ? 'Connecting and pushing…' : 'Connect and push now'}</button>
-            {status.scim && <button className="secondary" onClick={() => setScimOpen(false)}>Cancel</button>}
+            {status.scim && <button className="secondary" onClick={() => { setScimOpen(false); setError(null); }}>Cancel</button>}
           </div>
           <p className="muted small">After the first push succeeds, Vercel lets you save Directory Sync and map groups. The token is stored in Pocket ID only.</p>
         </div>
@@ -223,7 +237,7 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
         then enable Enterprise Managed Users. Attendees sign in at <code>{status.signInUrl}</code>{copyButton(status.signInUrl, 'signin')}.
       </p>
 
-      {error && <p className="error">{error}</p>}
+      {error?.at === 'load' && <p className="error">{error.message}</p>}
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { isWorkshopAdmin, workshopUnauthorized } from '@/lib/workshop-auth';
 import { getVercelTeamStatus, syncVercelDirectory } from '@/lib/workshop';
+import { InvalidInputError } from '@/lib/workshop';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -13,6 +14,9 @@ export async function POST(request: Request): Promise<Response> {
     await syncVercelDirectory();
     return Response.json(await getVercelTeamStatus(new URL(request.url).origin), { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
+    if (error instanceof InvalidInputError) {
+      return Response.json({ error: error.message }, { status: 400, headers: { 'cache-control': 'no-store' } });
+    }
     console.error('Directory Sync run failed', error);
     return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }

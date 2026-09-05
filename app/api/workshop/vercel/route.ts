@@ -5,6 +5,7 @@ import {
   rotateVercelClientSecret,
   updateVercelClient,
 } from '@/lib/workshop';
+import { InvalidInputError } from '@/lib/workshop';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -13,6 +14,9 @@ export const dynamic = 'force-dynamic';
 const noStore = { headers: { 'cache-control': 'no-store' } };
 
 function failure(error: unknown, context: string): Response {
+  if (error instanceof InvalidInputError) {
+    return Response.json({ error: error.message }, { status: 400, ...noStore });
+  }
   console.error(context, error);
   return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500, ...noStore });
 }
