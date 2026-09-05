@@ -1,8 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["iad1"],
+  "framework": "nextjs",
+  "regions": [
+    "iad1"
+  ],
   "fluid": true,
   "crons": [
-    { "path": "/api/lifecycle/idle", "schedule": "* * * * *" }
+    {
+      "path": "/api/lifecycle/idle",
+      "schedule": "* * * * *"
+    }
   ]
 }
