@@ -1,5 +1,6 @@
 import { after } from 'next/server';
 import { getKnownSandboxOrigin, invalidateKnownSandboxOrigin, recordProxyActivity } from '@/lib/sandbox-control';
+import { isSetupComplete } from '@/lib/secrets';
 import { applySignupEmailPolicy, autoSyncAfterSignup, getSignupEmailPolicy } from '@/lib/workshop';
 
 export const runtime = 'nodejs';
@@ -40,6 +41,15 @@ async function proxy(request: Request): Promise<Response> {
     const inboundUrl = new URL(request.url);
     if (isControllerPath(inboundUrl.pathname)) {
       return new Response('Not found', { status: 404 });
+    }
+    // Browsers and link previewers fetch this on their own; never wake Pocket ID for it.
+    if (inboundUrl.pathname === '/favicon.ico') {
+      return new Response(null, { status: 204, headers: { 'cache-control': 'public, max-age=86400' } });
+    }
+    // The middleware sends pages to /setup before first run, but paths it
+    // skips (and direct API calls) must not start a Sandbox without secrets.
+    if (!(await isSetupComplete())) {
+      return Response.redirect(new URL('/setup', inboundUrl.origin), 307);
     }
     const origin = await getKnownSandboxOrigin();
     await recordProxyActivity();

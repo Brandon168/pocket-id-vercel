@@ -123,6 +123,9 @@ async function waitForHealth(origin: string): Promise<void> {
 }
 
 async function resumeAsLeaseOwner(owner: string): Promise<string> {
+  // Fail before creating anything if first-run setup has not happened; a
+  // Sandbox with no secrets to hand Pocket ID would only sit idle and bill.
+  await requireSecrets();
   const idleMinutes = Number(process.env.SANDBOX_IDLE_MINUTES ?? 120);
   const requiredMs = (idleMinutes + 5) * 60_000;
   const sandbox = await Sandbox.getOrCreate({
