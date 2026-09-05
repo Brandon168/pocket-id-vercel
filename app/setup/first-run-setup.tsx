@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { defaultDraft, OptionsForm, type OptionsDraft } from '../workshop/options-form';
 
 type Claimed = {
   adminSecret: string;
@@ -13,17 +14,32 @@ type Conflict = {
   createdAt: string | null;
 };
 
-const attendeeChoices = [50, 100, 250, 500, 1000];
+type Prepare = { state: 'running' } | { state: 'done'; joinUrl: string } | { state: 'failed'; message: string };
 
 export function FirstRunSetup() {
-  const [expectedAttendees, setExpectedAttendees] = useState(100);
-  const [requireEmail, setRequireEmail] = useState(false);
+  const [draft, setDraft] = useState<OptionsDraft>(defaultDraft);
   const [claimed, setClaimed] = useState<Claimed | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
+  const [prepare, setPrepare] = useState<Prepare | null>(null);
+
+  // Starts Pocket ID and provisions the workshop while the instructor saves
+  // the password. The claim response set the session cookie, so this call is
+  // already authenticated.
+  async function prepareWorkshop() {
+    setPrepare({ state: 'running' });
+    try {
+      const response = await fetch(`${window.location.origin}/api/workshop/setup`, { method: 'POST' });
+      const result = await response.json() as { joinUrl?: string; error?: string };
+      if (!response.ok || !result.joinUrl) throw new Error(result.error ?? 'Preparing the workshop failed');
+      setPrepare({ state: 'done', joinUrl: result.joinUrl });
+    } catch (cause) {
+      setPrepare({ state: 'failed', message: cause instanceof Error ? cause.message : String(cause) });
+    }
+  }
 
   async function claim() {
     setWorking(true);
@@ -32,7 +48,7 @@ export function FirstRunSetup() {
       const response = await fetch(`${window.location.origin}/api/setup`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ expectedAttendees, requireEmail }),
+        body: JSON.stringify(draft),
       });
       const result = await response.json() as Claimed | Conflict | { error?: string };
       if (response.status === 409 && 'error' in result && result.error === 'already_set_up') {
@@ -41,6 +57,7 @@ export function FirstRunSetup() {
       }
       if (!response.ok) throw new Error(('error' in result && result.error) || 'Setup failed');
       setClaimed(result as Claimed);
+      void prepareWorkshop();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -51,6 +68,7 @@ export function FirstRunSetup() {
   async function copy(value: string, label: string) {
     await navigator.clipboard.writeText(value);
     setCopied(label);
+    if (label === 'password') setAcknowledged(true);
     setTimeout(() => setCopied(''), 1_500);
   }
 
@@ -78,8 +96,8 @@ export function FirstRunSetup() {
           <p className="eyebrow">Save this now</p>
           <h2>Your instructor password</h2>
           <p className="muted">
-            Shown once and not stored anywhere you can read it later. Copy it into your password manager
-            before leaving this page.
+            Shown once and not stored anywhere you can read it later. Copy it into your password manager.
+            This browser is already signed in as the instructor; the password is for any other device.
           </p>
         </div>
 
@@ -93,11 +111,27 @@ export function FirstRunSetup() {
           </div>
         </div>
 
-        <div className="callout">
-          <p>
-            <strong>How to sign in:</strong> the next page shows your browser&apos;s sign-in prompt.
-            Leave the username empty (or type anything) and paste this password. Only the password is checked.
-          </p>
+        <div className={`progress ${prepare?.state ?? 'running'}`}>
+          {(!prepare || prepare.state === 'running') && (
+            <>
+              <span className="spinner" aria-hidden="true" />
+              <p>
+                <strong>Preparing your workshop in the background.</strong> Starting Pocket ID (about a minute), then creating the instructor
+                admin, groups, client, and signup capacity. You can keep this page open or continue; the console shows progress too.
+              </p>
+            </>
+          )}
+          {prepare?.state === 'done' && (
+            <p>
+              <strong>Workshop ready.</strong> Attendees sign up at <code>{prepare.joinUrl}</code>. The console has the QR code.
+            </p>
+          )}
+          {prepare?.state === 'failed' && (
+            <p>
+              <strong>Preparing did not finish:</strong> {prepare.message} Open the console and click <strong>Prepare workshop</strong> to retry;
+              every step is safe to repeat.
+            </p>
+          )}
         </div>
 
         <details className="advanced">
@@ -122,10 +156,10 @@ export function FirstRunSetup() {
           aria-disabled={!acknowledged}
           onClick={(event) => { if (!acknowledged) event.preventDefault(); }}
         >
-          Continue to instructor console
+          Open instructor console
         </a>
         <p className="muted small">
-          Lost it later? Set a <code>WORKSHOP_ADMIN_SECRET</code> environment variable on the Vercel project and redeploy.
+          Lost the password later? Set a <code>WORKSHOP_ADMIN_SECRET</code> environment variable on the Vercel project and redeploy.
         </p>
       </div>
     );
@@ -137,37 +171,13 @@ export function FirstRunSetup() {
         <p className="eyebrow">First run</p>
         <h2>Set up this workshop</h2>
         <p className="muted">
-          Two quick choices, then one click generates the secrets this workshop needs and stores them in its
-          Neon database. You will get an instructor password to save.
+          A few quick choices, then one click generates the secrets this workshop needs and stores them in its
+          Neon database. You will get an instructor password to save. You can still change these choices from
+          the console until you prepare the workshop.
         </p>
       </div>
 
-      <fieldset className="choice-group">
-        <legend>How many attendees?</legend>
-        <div className="choices">
-          {attendeeChoices.map((count) => (
-            <label key={count} className={`choice${expectedAttendees === count ? ' selected' : ''}`}>
-              <input
-                type="radio"
-                name="attendees"
-                value={count}
-                checked={expectedAttendees === count}
-                onChange={() => setExpectedAttendees(count)}
-              />
-              {count.toLocaleString()}
-            </label>
-          ))}
-        </div>
-        <p className="muted small">Sets signup capacity with 20% headroom. Larger rooms take a little longer to prepare.</p>
-      </fieldset>
-
-      <label className="acknowledge">
-        <input type="checkbox" checked={requireEmail} onChange={(event) => setRequireEmail(event.target.checked)} />
-        Require an email address at signup
-      </label>
-      <p className="muted small">
-        Username is always required; first and last name are always optional. Pocket ID has no setting to change that.
-      </p>
+      <OptionsForm value={draft} onChange={setDraft} disabled={working} />
 
       {error && <p className="error">{error}</p>}
       <button className="primary" disabled={working} onClick={claim}>

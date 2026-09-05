@@ -1,4 +1,6 @@
+import { after } from 'next/server';
 import { getKnownSandboxOrigin, invalidateKnownSandboxOrigin, recordProxyActivity } from '@/lib/sandbox-control';
+import { applySignupEmailPolicy, autoSyncAfterSignup, getSignupEmailPolicy } from '@/lib/workshop';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -22,6 +24,17 @@ function isControllerPath(pathname: string): boolean {
   return controllerPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
+// Attendee self-registration. In Vercel team mode the email is rewritten to
+// the team's verified domain before Pocket ID sees it. Every other request
+// body passes through untouched.
+async function requestBody(request: Request, pathname: string): Promise<BodyInit | undefined> {
+  if (request.method === 'GET' || request.method === 'HEAD') return undefined;
+  if (request.method !== 'POST' || pathname !== '/api/signup') return await request.arrayBuffer();
+  const policy = await getSignupEmailPolicy().catch(() => null);
+  const raw = await request.text();
+  return policy ? applySignupEmailPolicy(raw, policy) : raw;
+}
+
 async function proxy(request: Request): Promise<Response> {
   try {
     const inboundUrl = new URL(request.url);
@@ -36,15 +49,22 @@ async function proxy(request: Request): Promise<Response> {
     headers.set('x-forwarded-host', inboundUrl.host);
     headers.set('x-forwarded-proto', inboundUrl.protocol.slice(0, -1));
 
-    const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
+    const upstreamBody = await requestBody(request, inboundUrl.pathname);
+    // The body may have been rewritten; let fetch recompute the length.
+    headers.delete('content-length');
     const response = await fetch(upstreamUrl, {
       method: request.method,
       headers,
-      body: hasBody ? await request.arrayBuffer() : undefined,
+      body: upstreamBody,
       redirect: 'manual',
       cache: 'no-store',
       signal: AbortSignal.timeout(45_000),
     });
+    // A new attendee in Vercel team mode: push them to the team shortly,
+    // without holding up their response.
+    if (request.method === 'POST' && inboundUrl.pathname === '/api/signup' && response.status === 201) {
+      after(autoSyncAfterSignup);
+    }
     const responseHeaders = new Headers(response.headers);
     for (const name of Object.keys(hopByHopHeaders)) responseHeaders.delete(name);
     const location = responseHeaders.get('location');

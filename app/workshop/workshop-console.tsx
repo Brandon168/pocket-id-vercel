@@ -1,6 +1,8 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
+import { OptionsForm, type OptionsDraft, type WorkshopMode } from './options-form';
+import { VercelTeamPanel } from './vercel-team-panel';
 
 type WorkshopSetup = {
   adminUsername: string;
@@ -16,11 +18,18 @@ type Attendee = { id: string; username: string; displayName: string; email: stri
 type AttendeePage = { idle: false; attendees: Attendee[]; page: number; totalPages: number; totalItems: number };
 type AttendeesIdle = { idle: true };
 
+type WorkshopOptions = { expectedAttendees: number; requireEmail: boolean; mode: WorkshopMode; emailDomain: string | null };
+
 type WorkshopStatus = {
   setup: WorkshopSetup | null;
-  options: { expectedAttendees: number; requireEmail: boolean };
+  options: WorkshopOptions;
+  preparing: boolean;
   plan: { tokenCount: number; capacity: number; estimatedSeconds: number };
 };
+
+function toDraft(options: WorkshopOptions): OptionsDraft {
+  return { ...options, emailDomain: options.emailDomain ?? '' };
+}
 
 export function WorkshopConsole() {
   const [setup, setSetup] = useState<WorkshopSetup | null>(null);
@@ -46,18 +55,58 @@ export function WorkshopConsole() {
 
   useEffect(() => { void load(); }, []);
 
+  // A Prepare started from /setup (or another tab) shows here as progress;
+  // poll until the setup row appears or the lease lapses.
+  const preparingElsewhere = Boolean(status?.preparing && !setup && !creating);
+  useEffect(() => {
+    if (!preparingElsewhere) return;
+    const timer = setInterval(() => { void load(); }, 5_000);
+    return () => clearInterval(timer);
+  }, [preparingElsewhere]);
+
   async function createWorkshop() {
     setCreating(true);
     setError('');
     try {
       const response = await fetch(`${window.location.origin}/api/workshop/setup`, { method: 'POST' });
-      const result = await response.json() as WorkshopSetup & { error?: string };
+      const result = await response.json() as WorkshopSetup & { error?: string; inProgress?: boolean };
+      if (response.status === 409 && result.inProgress) {
+        await load();
+        return;
+      }
       if (!response.ok) throw new Error(result.error ?? 'Workshop setup failed');
       setSetup(result);
+      await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setCreating(false);
+    }
+  }
+
+  // Options stay editable until the workshop is prepared.
+  const [editingOptions, setEditingOptions] = useState(false);
+  const [draft, setDraft] = useState<OptionsDraft | null>(null);
+  const [savingOptions, setSavingOptions] = useState(false);
+
+  async function saveOptions() {
+    if (!draft) return;
+    setSavingOptions(true);
+    setError('');
+    try {
+      const response = await fetch(`${window.location.origin}/api/workshop/options`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(draft),
+      });
+      const result = await response.json() as WorkshopOptions & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Could not save options');
+      setEditingOptions(false);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSavingOptions(false);
     }
   }
 
@@ -186,31 +235,89 @@ export function WorkshopConsole() {
     const capacity = status?.plan.capacity ?? 0;
     const attendees = status?.options.expectedAttendees ?? 0;
     const seconds = status?.plan.estimatedSeconds ?? 0;
+    const options = status?.options;
+    const vercelTeam = options?.mode === 'vercel-team';
+    if (preparingElsewhere) {
+      return (
+        <div className="panel setup-panel">
+          <div>
+            <p className="eyebrow">Almost there</p>
+            <h2>Preparing your workshop</h2>
+          </div>
+          <div className="progress running">
+            <span className="spinner" aria-hidden="true" />
+            <p>
+              Starting Pocket ID (about a minute), then creating the instructor admin, groups, client, and signup capacity for{' '}
+              {capacity.toLocaleString()} attendees. This page updates by itself when it finishes.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    if (editingOptions && draft) {
+      return (
+        <div className="panel setup-panel">
+          <div>
+            <p className="eyebrow">Before you prepare</p>
+            <h2>Change workshop options</h2>
+          </div>
+          <OptionsForm value={draft} onChange={setDraft} disabled={savingOptions} />
+          {error && <p className="error">{error}</p>}
+          <div className="inline-actions">
+            <button className="primary" disabled={savingOptions} onClick={saveOptions}>{savingOptions ? 'Saving…' : 'Save options'}</button>
+            <button className="secondary" disabled={savingOptions} onClick={() => { setEditingOptions(false); setError(''); }}>Cancel</button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="panel setup-panel">
         <div>
           <p className="eyebrow">One-click setup</p>
           <h2>Prepare this workshop</h2>
           <p className="muted">
-            Creates the instructor admin, workshop group, OIDC client, and signup capacity for{' '}
-            {capacity.toLocaleString()} attendees ({attendees.toLocaleString()} expected plus headroom).
-            {status?.options.requireEmail ? ' Attendees must provide an email.' : ' Email is optional at signup.'}
+            {vercelTeam ? (
+              <>
+                Creates the instructor admin, the <code>workshop</code> and <code>vercel-role-member</code> groups, a confidential
+                <code> vercel-sso</code> client with its secret, and signup capacity for {capacity.toLocaleString()} attendees
+                ({attendees.toLocaleString()} expected plus headroom). Every attendee is registered as{' '}
+                <code>username@{options?.emailDomain}</code>.
+              </>
+            ) : (
+              <>
+                Creates the instructor admin, workshop group, the <code>workshop-app</code> OIDC client, and signup capacity for{' '}
+                {capacity.toLocaleString()} attendees ({attendees.toLocaleString()} expected plus headroom).
+                {options?.requireEmail ? ' Attendees must provide an email.' : ' Email is optional at signup.'}
+              </>
+            )}
             {' '}Links expire after three days.
           </p>
         </div>
+        <dl>
+          <div><dt>Attendees sign in to</dt><dd>{vercelTeam ? 'A Vercel Enterprise team (SSO + Directory Sync)' : 'An app you are building'}</dd></div>
+          {vercelTeam && <div><dt>Email domain</dt><dd><code>{options?.emailDomain}</code></dd></div>}
+          <div><dt>Room size</dt><dd>{attendees.toLocaleString()} expected · capacity {capacity.toLocaleString()}</dd></div>
+        </dl>
         {error && <p className="error">{error}</p>}
-        <button className="primary" disabled={creating} onClick={createWorkshop}>
-          {creating ? 'Preparing workshop…' : 'Prepare workshop'}
-        </button>
+        <div className="inline-actions">
+          <button className="primary" disabled={creating} onClick={createWorkshop}>
+            {creating ? 'Preparing workshop…' : 'Prepare workshop'}
+          </button>
+          <button className="secondary" disabled={creating || !options} onClick={() => { if (options) { setDraft(toDraft(options)); setEditingOptions(true); } }}>
+            Change options
+          </button>
+        </div>
         {creating && (
           <p className="muted small">
             First run also starts Pocket ID (up to a minute). Provisioning itself takes about {seconds} seconds.
           </p>
         )}
+        <p className="muted small">Options lock once the workshop is prepared. To change them afterwards, delete the project and Neon resource and deploy again.</p>
       </div>
     );
   }
 
+  const vercelTeam = status?.options.mode === 'vercel-team';
   const qrUrl = `/api/workshop/qr?url=${encodeURIComponent(setup.joinUrl)}`;
   return (
     <div className="console-grid">
@@ -234,8 +341,31 @@ export function WorkshopConsole() {
         <a className="download" href={`${qrUrl}&download=1`}>Download QR code</a>
         <p className="muted small">
           One stable URL distributes attendees across {status?.plan.tokenCount ?? 1} signup pool{(status?.plan.tokenCount ?? 1) === 1 ? '' : 's'} of 100 uses each.
+          {vercelTeam && <> Email is assigned automatically as <code>username@{status?.options.emailDomain}</code>; attendees can leave it blank.</>}
         </p>
       </section>
+
+      {vercelTeam && <VercelTeamPanel copy={copy} copied={copied} />}
+
+      {!vercelTeam && (
+        <section className="panel integration-panel">
+          <div>
+            <p className="eyebrow">Your app</p>
+            <h2>Point your app at Pocket ID</h2>
+          </div>
+          <dl>
+            <div><dt>Issuer</dt><dd><code>{window.location.origin}</code><button className="tiny" onClick={() => copy(window.location.origin, 'issuer')}>{copied === 'issuer' ? 'Copied' : 'Copy'}</button></dd></div>
+            <div><dt>Discovery</dt><dd><code>{`${window.location.origin}/.well-known/openid-configuration`}</code></dd></div>
+            <div><dt>Client ID</dt><dd><code>workshop-app</code></dd></div>
+            <div><dt>Client type</dt><dd>Public, PKCE required, no secret</dd></div>
+            <div><dt>Callback</dt><dd><code>https://*.vercel.app/api/auth/callback/pocket-id</code></dd></div>
+          </dl>
+          <p className="muted small">
+            Any Vercel deployment, including previews, can complete sign-in. Edit the client in Pocket ID admin under
+            <strong> OIDC Clients</strong> if your app uses a different callback path.
+          </p>
+        </section>
+      )}
 
       <section className="panel admin-panel">
         <div>
@@ -281,6 +411,9 @@ export function WorkshopConsole() {
           <li><strong>Passkeys blocked entirely?</strong> <strong>Skip for now</strong> keeps them signed in for 30 days on that device.</li>
           <li><strong>Signed out, or on another device, with no passkey?</strong> Ask for their username (it is on their Settings → Account page if they are still signed in anywhere), find them below, and click <strong>Login code</strong>. Send the link or have them type the code. Works once, lasts an hour.</li>
           <li><strong>Tip for your signup slide:</strong> ask attendees to use <code>firstname-lastname</code> as their username. Name and email are optional in Pocket ID, so the username is how you will find people.</li>
+          {vercelTeam && (
+            <li><strong>Vercel account not showing up?</strong> Signups are pushed to Vercel about 15 seconds after they happen. If someone is still missing after a minute, click <strong>Sync now</strong> above, then have them sign in at the sign-in link shown in the Vercel team panel.</li>
+          )}
         </ol>
 
         <div className="list-toolbar">

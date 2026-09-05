@@ -1,7 +1,10 @@
-import { verifyAdminSecret } from './secrets';
+import { verifyAdminSecret, verifyInstructorCookie } from './secrets';
 
+// The instructor is whoever holds the session cookie set at first-run claim,
+// or whoever presents the instructor password over HTTP Basic auth.
 export async function isWorkshopAdmin(request: Request | Headers): Promise<boolean> {
   const headers = request instanceof Headers ? request : request.headers;
+  if (await verifyInstructorCookie(headers.get('cookie'))) return true;
   const authorization = headers.get('authorization');
   if (!authorization?.startsWith('Basic ')) return false;
   try {

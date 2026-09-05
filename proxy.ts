@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { isSetupComplete } from './lib/secrets';
+import { instructorCookieHeader, isSetupComplete, verifyInstructorCookie } from './lib/secrets';
 import { isWorkshopAdmin } from './lib/workshop-auth';
 
 function startsWithPath(pathname: string, prefix: string): boolean {
@@ -37,7 +37,12 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   }
 
   if (startsWithPath(pathname, '/workshop')) {
-    if (await isWorkshopAdmin(request)) return NextResponse.next();
+    if (await isWorkshopAdmin(request)) {
+      // A password typed into the Basic-auth prompt on another device also
+      // earns the session cookie, so the prompt appears once per browser.
+      if (await verifyInstructorCookie(request.headers.get('cookie'))) return NextResponse.next();
+      return NextResponse.next({ headers: { 'set-cookie': await instructorCookieHeader() } });
+    }
     return new NextResponse('Instructor access required', {
       status: 401,
       headers: {

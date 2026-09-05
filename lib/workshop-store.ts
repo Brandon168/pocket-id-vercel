@@ -10,14 +10,42 @@ export type WorkshopSetup = {
   expiresAt: Date;
 };
 
+// What attendees sign in to once they have a passkey.
+//   app          — an application the room is building; Pocket ID issues a
+//                  public PKCE client (`workshop-app`).
+//   vercel-team  — a Vercel Enterprise team via SSO + Directory Sync
+//                  (Enterprise Managed Users); Pocket ID issues a confidential
+//                  client (`vercel-sso`) and pushes users over SCIM.
+export type WorkshopMode = 'app' | 'vercel-team';
+
 export type WorkshopOptions = {
   expectedAttendees: number;
   requireEmail: boolean;
+  mode: WorkshopMode;
+  // Required in vercel-team mode: every attendee's email is forced to this
+  // domain because Enterprise Managed Users only accepts a verified domain.
+  emailDomain: string | null;
 };
 
 export const defaultWorkshopOptions: WorkshopOptions = {
   expectedAttendees: 100,
   requireEmail: false,
+  mode: 'app',
+  emailDomain: null,
+};
+
+// Pocket ID side of the Vercel connection. The secret is stored so the
+// instructor can paste it into Vercel's SSO dialog whenever they get there;
+// it lives in the same Neon database as every other workshop secret.
+export type VercelConnection = {
+  clientId: string;
+  clientSecret: string;
+  callbackUrl: string;
+  // vercel.com/<slug>; optional, used for the client launch URL and sign-in link.
+  teamSlug: string | null;
+  scimProviderId: string | null;
+  scimEndpoint: string | null;
+  updatedAt: Date;
 };
 
 let sqlClient: NeonQueryFunction<false, false> | null = null;
@@ -92,7 +120,8 @@ export async function updateAdminLoginUrl(name: string, adminLoginUrl: string): 
 }
 
 async function initializeWorkshopOptions(): Promise<void> {
-  await workshopSql()`
+  const sql = workshopSql();
+  await sql`
     CREATE TABLE IF NOT EXISTS pocket_id_workshop_options (
       name text PRIMARY KEY,
       expected_attendees integer NOT NULL,
@@ -100,6 +129,43 @@ async function initializeWorkshopOptions(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `;
+  // Columns added after the first release; older workshops keep 'app' mode.
+  await sql`ALTER TABLE pocket_id_workshop_options ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'app'`;
+  await sql`ALTER TABLE pocket_id_workshop_options ADD COLUMN IF NOT EXISTS email_domain text`;
+  await sql`ALTER TABLE pocket_id_workshop_options ADD COLUMN IF NOT EXISTS prepare_started_at timestamptz`;
+}
+
+// Prepare runs from /setup automatically and from the console on demand.
+// A short lease keeps two callers from provisioning at the same time and lets
+// the console show "preparing" instead of a second button.
+const prepareLeaseMinutes = 5;
+
+export async function acquirePrepareLease(name: string): Promise<boolean> {
+  await initializeWorkshopOptions();
+  const rows = await workshopSql()`
+    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email, mode, email_domain, prepare_started_at)
+    VALUES (${name}, ${defaultWorkshopOptions.expectedAttendees}, ${defaultWorkshopOptions.requireEmail}, ${defaultWorkshopOptions.mode}, ${defaultWorkshopOptions.emailDomain}, now())
+    ON CONFLICT (name) DO UPDATE SET prepare_started_at = now()
+    WHERE pocket_id_workshop_options.prepare_started_at IS NULL
+       OR pocket_id_workshop_options.prepare_started_at < now() - make_interval(mins => ${prepareLeaseMinutes})
+    RETURNING name
+  `;
+  return rows.length > 0;
+}
+
+export async function releasePrepareLease(name: string): Promise<void> {
+  await workshopSql()`UPDATE pocket_id_workshop_options SET prepare_started_at = NULL WHERE name = ${name}`;
+}
+
+export async function isPrepareInProgress(name: string): Promise<boolean> {
+  await initializeWorkshopOptions();
+  const rows = await workshopSql()`
+    SELECT 1 FROM pocket_id_workshop_options
+    WHERE name = ${name}
+      AND prepare_started_at IS NOT NULL
+      AND prepare_started_at >= now() - make_interval(mins => ${prepareLeaseMinutes})
+  `;
+  return rows.length > 0;
 }
 
 export async function getWorkshopOptions(name: string): Promise<WorkshopOptions> {
@@ -110,17 +176,21 @@ export async function getWorkshopOptions(name: string): Promise<WorkshopOptions>
   return {
     expectedAttendees: Number(row.expected_attendees),
     requireEmail: Boolean(row.require_email),
+    mode: row.mode === 'vercel-team' ? 'vercel-team' : 'app',
+    emailDomain: row.email_domain ? String(row.email_domain) : null,
   };
 }
 
 export async function saveWorkshopOptions(name: string, options: WorkshopOptions): Promise<void> {
   await initializeWorkshopOptions();
   await workshopSql()`
-    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email)
-    VALUES (${name}, ${options.expectedAttendees}, ${options.requireEmail})
+    INSERT INTO pocket_id_workshop_options (name, expected_attendees, require_email, mode, email_domain)
+    VALUES (${name}, ${options.expectedAttendees}, ${options.requireEmail}, ${options.mode}, ${options.emailDomain})
     ON CONFLICT (name) DO UPDATE SET
       expected_attendees = EXCLUDED.expected_attendees,
       require_email = EXCLUDED.require_email,
+      mode = EXCLUDED.mode,
+      email_domain = EXCLUDED.email_domain,
       updated_at = now()
   `;
 }
@@ -137,4 +207,75 @@ export async function takeNextSignupToken(name: string): Promise<string | null> 
   const row = rows[0] as Record<string, unknown>;
   const tokens = row.signup_tokens as string[];
   return tokens[(Number(row.next_token) - 1) % tokens.length] ?? null;
+}
+
+async function initializeVercelConnection(): Promise<void> {
+  await workshopSql()`
+    CREATE TABLE IF NOT EXISTS pocket_id_vercel_connection (
+      name text PRIMARY KEY,
+      client_id text NOT NULL,
+      client_secret text NOT NULL,
+      callback_url text NOT NULL,
+      team_slug text,
+      scim_provider_id text,
+      scim_endpoint text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+  await workshopSql()`ALTER TABLE pocket_id_vercel_connection ADD COLUMN IF NOT EXISTS team_slug text`;
+  await workshopSql()`ALTER TABLE pocket_id_vercel_connection ADD COLUMN IF NOT EXISTS last_auto_sync_at timestamptz`;
+}
+
+// One automatic SCIM push per window; concurrent signups share it.
+export async function acquireAutoSyncSlot(name: string, windowSeconds: number): Promise<boolean> {
+  await initializeVercelConnection();
+  const rows = await workshopSql()`
+    UPDATE pocket_id_vercel_connection
+    SET last_auto_sync_at = now()
+    WHERE name = ${name}
+      AND scim_provider_id IS NOT NULL
+      AND (last_auto_sync_at IS NULL OR last_auto_sync_at < now() - make_interval(secs => ${windowSeconds}))
+    RETURNING name
+  `;
+  return rows.length > 0;
+}
+
+function mapConnection(row: Record<string, unknown>): VercelConnection {
+  return {
+    clientId: String(row.client_id),
+    clientSecret: String(row.client_secret),
+    callbackUrl: String(row.callback_url),
+    teamSlug: row.team_slug ? String(row.team_slug) : null,
+    scimProviderId: row.scim_provider_id ? String(row.scim_provider_id) : null,
+    scimEndpoint: row.scim_endpoint ? String(row.scim_endpoint) : null,
+    updatedAt: new Date(String(row.updated_at)),
+  };
+}
+
+export async function getVercelConnection(name: string): Promise<VercelConnection | null> {
+  await initializeVercelConnection();
+  const rows = await workshopSql()`SELECT * FROM pocket_id_vercel_connection WHERE name = ${name}`;
+  return rows.length ? mapConnection(rows[0] as Record<string, unknown>) : null;
+}
+
+export async function saveVercelConnection(
+  name: string,
+  connection: Omit<VercelConnection, 'updatedAt'>,
+): Promise<void> {
+  await initializeVercelConnection();
+  await workshopSql()`
+    INSERT INTO pocket_id_vercel_connection (name, client_id, client_secret, callback_url, team_slug, scim_provider_id, scim_endpoint)
+    VALUES (
+      ${name}, ${connection.clientId}, ${connection.clientSecret}, ${connection.callbackUrl}, ${connection.teamSlug},
+      ${connection.scimProviderId}, ${connection.scimEndpoint}
+    )
+    ON CONFLICT (name) DO UPDATE SET
+      client_id = EXCLUDED.client_id,
+      client_secret = EXCLUDED.client_secret,
+      callback_url = EXCLUDED.callback_url,
+      team_slug = EXCLUDED.team_slug,
+      scim_provider_id = EXCLUDED.scim_provider_id,
+      scim_endpoint = EXCLUDED.scim_endpoint,
+      updated_at = now()
+  `;
 }

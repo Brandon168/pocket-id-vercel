@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
 
 export type WorkshopSecrets = {
@@ -130,4 +130,31 @@ export async function verifyAdminSecret(supplied: string): Promise<boolean> {
   const suppliedHash = Buffer.from(hashSecret(supplied), 'hex');
   const expectedHash = Buffer.from(secrets.adminSecretHash, 'hex');
   return suppliedHash.length === expectedHash.length && timingSafeEqual(suppliedHash, expectedHash);
+}
+
+// Instructor session cookie. Derived from the stored secrets, so it needs no
+// extra state, is invalidated by rotating WORKSHOP_ADMIN_SECRET, and never
+// contains the password itself. Set for the deployer at first-run claim so the
+// console opens without a Basic-auth prompt; other devices still use Basic.
+export const instructorCookieName = 'pid_instructor';
+const instructorCookieMaxAgeSeconds = 14 * 24 * 60 * 60;
+
+function instructorToken(secrets: WorkshopSecrets): string {
+  return createHmac('sha256', secrets.staticApiKey).update(`instructor:${secrets.adminSecretHash}`).digest('hex');
+}
+
+export async function instructorCookieHeader(): Promise<string> {
+  const secrets = await requireSecrets();
+  return `${instructorCookieName}=${instructorToken(secrets)}; Path=/; Max-Age=${instructorCookieMaxAgeSeconds}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+export async function verifyInstructorCookie(cookieHeader: string | null): Promise<boolean> {
+  if (!cookieHeader) return false;
+  const match = cookieHeader.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${instructorCookieName}=`));
+  if (!match) return false;
+  const secrets = await getSecrets();
+  if (!secrets) return false;
+  const supplied = Buffer.from(match.slice(instructorCookieName.length + 1), 'hex');
+  const expected = Buffer.from(instructorToken(secrets), 'hex');
+  return supplied.length === expected.length && supplied.length > 0 && timingSafeEqual(supplied, expected);
 }

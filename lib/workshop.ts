@@ -2,10 +2,18 @@ import { getLifecycleState } from './lifecycle-store';
 import { getKnownSandboxOrigin } from './sandbox-control';
 import { requireSecrets } from './secrets';
 import {
+  acquireAutoSyncSlot,
+  acquirePrepareLease,
+  defaultWorkshopOptions,
+  getVercelConnection,
   getWorkshopOptions,
   getWorkshopSetup,
+  releasePrepareLease,
+  saveVercelConnection,
   saveWorkshopSetup,
   updateAdminLoginUrl,
+  type VercelConnection,
+  type WorkshopMode,
   type WorkshopOptions,
   type WorkshopSetup,
 } from './workshop-store';
@@ -19,14 +27,27 @@ const tokenTtl = '72h';
 // as a safety margin. Admin API rate limiting is 100 req/s and disabled anyway.
 const mutationDelayMs = Number(process.env.WORKSHOP_SETUP_DELAY_MS ?? 1_000);
 
+// Vercel team mode. Vercel's "Custom OIDC" SSO dialog shows a per-team
+// login redirect URL of the form https://auth.vercel.com/sso/oidc/<id>/callback.
+// Pocket ID's single-segment wildcard covers every team, so nothing needs to
+// be pasted back; the console still lets the instructor pin an exact URL.
+export const vercelSsoClientId = 'vercel-sso';
+export const defaultVercelCallbackUrl = 'https://auth.vercel.com/sso/oidc/*/callback';
+// Directory Sync falls back to this group name to assign the Member role when
+// no explicit mapping is configured, so attendees never land as viewers.
+export const vercelMemberGroupName = 'vercel-role-member';
+export const workshopGroupName = 'workshop';
+
 export function signupTokenCount(expectedAttendees: number): number {
   return Math.max(1, Math.ceil((expectedAttendees * headroom) / tokenUsageLimit));
 }
 
-export function estimateSetupSeconds(expectedAttendees: number): number {
-  // Eight fixed mutations plus one per token, each followed by a pause,
-  // plus the API round trips themselves.
-  const mutations = 8 + signupTokenCount(expectedAttendees);
+export function estimateSetupSeconds(expectedAttendees: number, mode: WorkshopMode = 'app'): number {
+  // Fixed mutations plus one per token, each followed by a pause, plus the
+  // API round trips themselves. Vercel team mode adds the role group, the
+  // confidential client, and its secret.
+  const fixed = mode === 'vercel-team' ? 11 : 8;
+  const mutations = fixed + signupTokenCount(expectedAttendees);
   return Math.ceil((mutations * (mutationDelayMs + 400)) / 1000);
 }
 
@@ -67,12 +88,17 @@ type Group = { id: string; name: string; users?: Array<{ id: string }> };
 async function configureSignups(origin: string, options: WorkshopOptions): Promise<void> {
   const all = await pocketApi<Array<{ key: string; value: string }>>(origin, '/application-configuration/all');
   const configuration = Object.fromEntries(all.map(({ key, value }) => [key, value]));
+  const vercelTeam = options.mode === 'vercel-team';
   Object.assign(configuration, {
     allowUserSignups: 'withToken',
     // Pocket ID only exposes a requirement toggle for email. First and last
-    // name are always optional in its signup DTO.
-    requireUserEmail: options.requireEmail ? 'true' : 'false',
-    emailsVerified: 'false',
+    // name are always optional in its signup DTO. In Vercel team mode the
+    // proxy assigns <username>@<domain> itself, so the field stays optional
+    // and attendees cannot type a wrong domain.
+    requireUserEmail: !vercelTeam && options.requireEmail ? 'true' : 'false',
+    // The team verified the domain, so addresses the proxy assigns can be
+    // presented to Vercel as verified. Nothing is ever emailed.
+    emailsVerified: vercelTeam ? 'true' : 'false',
     emailVerificationEnabled: 'false',
     // Attendees who skip passkey creation stay signed in for the whole event.
     sessionDuration: String(30 * 24 * 60),
@@ -100,27 +126,41 @@ async function ensureAdmin(origin: string): Promise<User> {
   return created;
 }
 
-async function ensureGroup(origin: string): Promise<Group> {
-  const found = await pocketApi<Paginated<Group>>(origin, '/user-groups?search=workshop&pagination[limit]=5');
-  const existing = found.data?.find((group) => group.name === 'workshop');
+async function ensureGroup(origin: string, name: string, friendlyName: string = name): Promise<Group> {
+  const found = await pocketApi<Paginated<Group>>(
+    origin,
+    `/user-groups?search=${encodeURIComponent(name)}&pagination[limit]=5`,
+  );
+  const existing = found.data?.find((group) => group.name === name);
   if (existing) return existing;
   const created = await pocketApi<Group>(origin, '/user-groups', {
     method: 'POST',
-    body: JSON.stringify({ friendlyName: 'workshop', name: 'workshop' }),
+    body: JSON.stringify({ friendlyName, name }),
   });
   await pause();
   return created;
 }
 
-async function ensureClient(origin: string, groupId: string): Promise<void> {
-  let exists = false;
+async function clientExists(origin: string, clientId: string): Promise<boolean> {
   try {
-    const client = await pocketApi<{ id: string }>(origin, '/oidc/clients/workshop-app');
-    exists = client.id === 'workshop-app';
+    const client = await pocketApi<{ id: string }>(origin, `/oidc/clients/${clientId}`);
+    return client.id === clientId;
   } catch {
-    // Create the fixed workshop client below.
+    return false;
   }
-  if (!exists) {
+}
+
+async function restrictClientToGroups(origin: string, clientId: string, groupIds: string[]): Promise<void> {
+  await pocketApi(origin, `/oidc/clients/${clientId}/allowed-user-groups`, {
+    method: 'PUT',
+    body: JSON.stringify({ userGroupIds: groupIds }),
+  });
+  await pause();
+}
+
+// App mode: a public PKCE client for whatever the room is building.
+async function ensureAppClient(origin: string, groupId: string): Promise<void> {
+  if (!(await clientExists(origin, 'workshop-app'))) {
     await pocketApi(origin, '/oidc/clients', {
       method: 'POST',
       body: JSON.stringify({
@@ -136,11 +176,58 @@ async function ensureClient(origin: string, groupId: string): Promise<void> {
     });
     await pause();
   }
-  await pocketApi(origin, '/oidc/clients/workshop-app/allowed-user-groups', {
-    method: 'PUT',
-    body: JSON.stringify({ userGroupIds: [groupId] }),
+  await restrictClientToGroups(origin, 'workshop-app', [groupId]);
+}
+
+type ClientSecretCreated = { id: string; secret: string };
+
+// Attendees sign in to Vercel at this URL; with a team slug it also becomes
+// the client's launch URL, so Pocket ID shows a "Vercel" tile after signup.
+export function vercelSignInUrl(teamSlug: string | null): string {
+  return teamSlug ? `https://vercel.com/login?saml=${encodeURIComponent(teamSlug)}` : 'https://vercel.com/login';
+}
+
+const vercelSsoClientBody = (callbackUrl: string, teamSlug: string | null) => ({
+  name: 'Vercel',
+  description: 'Vercel team sign-in via SSO (Enterprise Managed Users)',
+  callbackURLs: [callbackUrl],
+  logoutCallbackURLs: [],
+  isPublic: false,
+  pkceEnabled: true,
+  skipConsent: true,
+  launchURL: teamSlug ? vercelSignInUrl(teamSlug) : null,
+});
+
+// Vercel team mode: a confidential client for Vercel's SSO connection plus a
+// stored secret. Idempotent; an existing connection is left untouched.
+async function ensureVercelSsoClient(origin: string, groupIds: string[]): Promise<VercelConnection> {
+  const existing = await getVercelConnection(workshopName);
+  if (!(await clientExists(origin, vercelSsoClientId))) {
+    await pocketApi(origin, '/oidc/clients', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: vercelSsoClientId,
+        ...vercelSsoClientBody(existing?.callbackUrl ?? defaultVercelCallbackUrl, existing?.teamSlug ?? null),
+      }),
+    });
+    await pause();
+  }
+  await restrictClientToGroups(origin, vercelSsoClientId, groupIds);
+  if (existing) return existing;
+  const created = await pocketApi<ClientSecretCreated>(origin, `/oidc/clients/${vercelSsoClientId}/secrets`, {
+    method: 'POST',
   });
   await pause();
+  const connection = {
+    clientId: vercelSsoClientId,
+    clientSecret: created.secret,
+    callbackUrl: defaultVercelCallbackUrl,
+    teamSlug: null,
+    scimProviderId: null,
+    scimEndpoint: null,
+  };
+  await saveVercelConnection(workshopName, connection);
+  return { ...connection, updatedAt: new Date() };
 }
 
 async function addAdminToGroup(origin: string, groupId: string, adminId: string): Promise<void> {
@@ -187,12 +274,12 @@ async function mintLoginLink(
   return { code: token, loginUrl: url.toString(), codeEntryUrl: `${publicOrigin}/lc`, ttl };
 }
 
-async function mintSignupTokens(origin: string, groupId: string, tokenCount: number): Promise<string[]> {
+async function mintSignupTokens(origin: string, groupIds: string[], tokenCount: number): Promise<string[]> {
   const tokens: string[] = [];
   for (let index = 0; index < tokenCount; index += 1) {
     const result = await pocketApi<{ token: string }>(origin, '/signup-tokens', {
       method: 'POST',
-      body: JSON.stringify({ ttl: tokenTtl, usageLimit: tokenUsageLimit, userGroupIds: [groupId] }),
+      body: JSON.stringify({ ttl: tokenTtl, usageLimit: tokenUsageLimit, userGroupIds: groupIds }),
     });
     tokens.push(result.token);
     await pause();
@@ -200,23 +287,50 @@ async function mintSignupTokens(origin: string, groupId: string, tokenCount: num
   return tokens;
 }
 
+export class PrepareInProgressError extends Error {
+  constructor() {
+    super('The workshop is already being prepared. This takes a minute or two; the console updates when it finishes.');
+  }
+}
+
 export async function setupWorkshop(requestOrigin: string): Promise<WorkshopSetup> {
   const existing = await getWorkshopSetup(workshopName);
   if (existing) return existing;
+  if (!(await acquirePrepareLease(workshopName))) throw new PrepareInProgressError();
+  try {
+    return await provisionWorkshop(requestOrigin);
+  } catch (error) {
+    await releasePrepareLease(workshopName).catch(() => undefined);
+    throw error;
+  }
+}
 
+async function provisionWorkshop(requestOrigin: string): Promise<WorkshopSetup> {
   const options = await getWorkshopOptions(workshopName);
+  if (options.mode === 'vercel-team' && !options.emailDomain) {
+    throw new Error('Vercel team mode needs the verified email domain. Set it before preparing the workshop.');
+  }
   const tokenCount = signupTokenCount(options.expectedAttendees);
   const origin = await getKnownSandboxOrigin();
   const publicOrigin = appUrl(requestOrigin);
   await configureSignups(origin, options);
   const admin = await ensureAdmin(origin);
-  const group = await ensureGroup(origin);
-  await ensureClient(origin, group.id);
+  const group = await ensureGroup(origin, workshopGroupName);
+  // Every group a signup token assigns. In Vercel team mode attendees also
+  // join the role group so Directory Sync maps them to Member.
+  const attendeeGroupIds = [group.id];
+  if (options.mode === 'vercel-team') {
+    const memberGroup = await ensureGroup(origin, vercelMemberGroupName, 'Vercel members');
+    attendeeGroupIds.push(memberGroup.id);
+    await ensureVercelSsoClient(origin, attendeeGroupIds);
+  } else {
+    await ensureAppClient(origin, group.id);
+  }
   await addAdminToGroup(origin, group.id, admin.id);
   // Stored for schema compatibility only; the console mints a fresh link on demand.
   const { loginUrl: adminLoginUrl } = await mintLoginLink(origin, publicOrigin, admin.id, '/settings/admin/users');
   await pause();
-  const signupTokens = await mintSignupTokens(origin, group.id, tokenCount);
+  const signupTokens = await mintSignupTokens(origin, attendeeGroupIds, tokenCount);
   const setup: WorkshopSetup = {
     adminId: admin.id,
     adminUsername: admin.username,
@@ -400,4 +514,227 @@ export async function getSignupProgress(): Promise<SignupProgress> {
 
 export function getWorkshopName(): string {
   return workshopName;
+}
+
+// ---------------------------------------------------------------------------
+// Vercel team mode: what the instructor pastes into Vercel, and the SCIM push.
+
+export type VercelTeamStatus = {
+  issuer: string;
+  discoveryUrl: string;
+  clientId: string;
+  clientSecret: string;
+  callbackUrl: string;
+  teamSlug: string | null;
+  signInUrl: string;
+  emailDomain: string;
+  memberGroup: string;
+  workshopGroup: string;
+  scim: { endpoint: string; lastSyncedAt: string | null } | null;
+  sandboxRunning: boolean;
+};
+
+type ScimServiceProvider = { id: string; endpoint: string; token: string; lastSyncedAt: string | null };
+
+async function requireVercelMode(): Promise<{ options: WorkshopOptions; connection: VercelConnection }> {
+  const options = await getWorkshopOptions(workshopName);
+  if (options.mode !== 'vercel-team') throw new Error('This workshop is not in Vercel team mode');
+  const connection = await getVercelConnection(workshopName);
+  if (!connection) throw new Error('Prepare the workshop first; the Vercel SSO client does not exist yet');
+  return { options, connection };
+}
+
+// Reads the stored connection and, when Pocket ID is running, the SCIM
+// provider's last sync time. Never wakes an idle Sandbox.
+export async function getVercelTeamStatus(requestOrigin: string): Promise<VercelTeamStatus> {
+  const { options, connection } = await requireVercelMode();
+  const issuer = appUrl(requestOrigin);
+  const state = await getLifecycleState(workshopName);
+  let scim: VercelTeamStatus['scim'] = connection.scimEndpoint ? { endpoint: connection.scimEndpoint, lastSyncedAt: null } : null;
+  if (state.status === 'running' && connection.scimProviderId) {
+    try {
+      const origin = await getKnownSandboxOrigin();
+      const provider = await pocketApi<ScimServiceProvider>(origin, `/oidc/clients/${vercelSsoClientId}/scim-service-provider`);
+      scim = { endpoint: provider.endpoint, lastSyncedAt: provider.lastSyncedAt };
+    } catch {
+      // Status is decorative; the stored endpoint is still shown.
+    }
+  }
+  return {
+    issuer,
+    discoveryUrl: `${issuer}/.well-known/openid-configuration`,
+    clientId: connection.clientId,
+    clientSecret: connection.clientSecret,
+    callbackUrl: connection.callbackUrl,
+    teamSlug: connection.teamSlug,
+    signInUrl: vercelSignInUrl(connection.teamSlug),
+    emailDomain: options.emailDomain ?? '',
+    memberGroup: vercelMemberGroupName,
+    workshopGroup: workshopGroupName,
+    scim,
+    sandboxRunning: state.status === 'running',
+  };
+}
+
+// Points Pocket ID's SCIM provisioning at Vercel's Directory Sync endpoint
+// and runs a first sync. Replaces any previous endpoint or token.
+export async function connectVercelDirectorySync(endpoint: string, token: string): Promise<void> {
+  const { connection } = await requireVercelMode();
+  const trimmedEndpoint = endpoint.trim().replace(/\/$/, '');
+  const trimmedToken = token.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmedEndpoint);
+  } catch {
+    throw new Error('The SCIM endpoint must be a full https:// URL');
+  }
+  if (parsed.protocol !== 'https:') throw new Error('The SCIM endpoint must use https');
+  if (!trimmedToken) throw new Error('The SCIM bearer token is required');
+
+  const origin = await getKnownSandboxOrigin();
+  const body = JSON.stringify({ endpoint: trimmedEndpoint, token: trimmedToken, oidcClientId: vercelSsoClientId });
+  let providerId = connection.scimProviderId;
+  if (providerId) {
+    await pocketApi(origin, `/scim/service-provider/${providerId}`, { method: 'PUT', body });
+  } else {
+    const created = await pocketApi<ScimServiceProvider>(origin, '/scim/service-provider', { method: 'POST', body });
+    providerId = created.id;
+  }
+  await saveVercelConnection(workshopName, { ...connection, scimProviderId: providerId, scimEndpoint: trimmedEndpoint });
+  await pocketApi(origin, `/scim/service-provider/${providerId}/sync`, { method: 'POST' });
+}
+
+export async function syncVercelDirectory(): Promise<void> {
+  const { connection } = await requireVercelMode();
+  if (!connection.scimProviderId) throw new Error('Directory Sync is not connected yet');
+  const origin = await getKnownSandboxOrigin();
+  await pocketApi(origin, `/scim/service-provider/${connection.scimProviderId}/sync`, { method: 'POST' });
+}
+
+// Called by the proxy after every successful signup in Vercel team mode.
+// Waits briefly, then pushes unless another signup's push already covered
+// this one: a user created at time t is included by any push at or after t,
+// and its own attempt at t+delay is skipped only when such a push happened.
+// Pocket ID's own five-minute debounce remains the backstop.
+const autoSyncDelayMs = 15_000;
+
+export async function autoSyncAfterSignup(): Promise<void> {
+  try {
+    const options = await getWorkshopOptions(workshopName);
+    if (options.mode !== 'vercel-team') return;
+    const connection = await getVercelConnection(workshopName);
+    if (!connection?.scimProviderId) return;
+    await sleep(autoSyncDelayMs);
+    if (!(await acquireAutoSyncSlot(workshopName, autoSyncDelayMs / 1000))) return;
+    const origin = await getKnownSandboxOrigin();
+    await pocketApi(origin, `/scim/service-provider/${connection.scimProviderId}/sync`, { method: 'POST' });
+  } catch (error) {
+    console.error('Automatic Directory Sync push failed', error);
+  }
+}
+
+// Issues a new client secret and forgets the old one. Vercel's SSO dialog
+// must be updated with the new value afterwards.
+export async function rotateVercelClientSecret(): Promise<string> {
+  const { connection } = await requireVercelMode();
+  const origin = await getKnownSandboxOrigin();
+  const existing = await pocketApi<Array<{ id: string }>>(origin, `/oidc/clients/${vercelSsoClientId}/secrets`);
+  const created = await pocketApi<ClientSecretCreated>(origin, `/oidc/clients/${vercelSsoClientId}/secrets`, { method: 'POST' });
+  for (const secret of existing) {
+    await pocketApi(origin, `/oidc/clients/${vercelSsoClientId}/secrets/${secret.id}`, { method: 'DELETE' });
+  }
+  await saveVercelConnection(workshopName, { ...connection, clientSecret: created.secret });
+  return created.secret;
+}
+
+// Adjusts the Vercel client. callbackUrl pins the exact login redirect URL
+// from Vercel's SSO dialog instead of the wildcard; teamSlug sets the launch
+// URL so attendees get a Vercel tile and the console can show the sign-in link.
+export async function updateVercelClient(patch: { callbackUrl?: string; teamSlug?: string | null }): Promise<void> {
+  const { connection } = await requireVercelMode();
+  let callbackUrl = connection.callbackUrl;
+  if (patch.callbackUrl !== undefined) {
+    callbackUrl = patch.callbackUrl.trim();
+    let parsed: URL;
+    try {
+      parsed = new URL(callbackUrl.replace(/\*/g, 'x'));
+    } catch {
+      throw new Error('The redirect URL must be a full https:// URL');
+    }
+    if (parsed.protocol !== 'https:') throw new Error('The redirect URL must use https');
+  }
+  let teamSlug = connection.teamSlug;
+  if (patch.teamSlug !== undefined) {
+    const slug = (patch.teamSlug ?? '').trim().toLowerCase();
+    if (slug && !/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/.test(slug)) {
+      throw new Error('Enter the team slug as it appears in vercel.com/<slug>');
+    }
+    teamSlug = slug || null;
+  }
+  const origin = await getKnownSandboxOrigin();
+  await pocketApi(origin, `/oidc/clients/${vercelSsoClientId}`, {
+    method: 'PUT',
+    body: JSON.stringify(vercelSsoClientBody(callbackUrl, teamSlug)),
+  });
+  await saveVercelConnection(workshopName, { ...connection, callbackUrl, teamSlug });
+}
+
+// ---------------------------------------------------------------------------
+// Signup email policy, applied by the reverse proxy on POST /api/signup.
+
+export type SignupEmailPolicy = { domain: string } | null;
+
+export async function getSignupEmailPolicy(): Promise<SignupEmailPolicy> {
+  const options = await getWorkshopOptions(workshopName);
+  return options.mode === 'vercel-team' && options.emailDomain ? { domain: options.emailDomain } : null;
+}
+
+// Rewrites a signup body so the email is always <username>@<domain>. Attendees
+// may leave email blank or type anything; Enterprise Managed Users only
+// accepts the team's verified domain, so the proxy decides.
+export function applySignupEmailPolicy(body: string, policy: { domain: string }): string {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return body;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return body;
+  const username = typeof parsed.username === 'string' ? parsed.username.trim() : '';
+  if (!username) return body;
+  const email = typeof parsed.email === 'string' ? parsed.email.trim().toLowerCase() : '';
+  const suffix = `@${policy.domain.toLowerCase()}`;
+  if (email && email.endsWith(suffix)) return JSON.stringify({ ...parsed, email });
+  // Usernames may contain '@' and '.'; keep only what makes a valid local part.
+  const local = username.toLowerCase().split('@')[0].replace(/[^a-z0-9._-]/g, '') || 'attendee';
+  return JSON.stringify({ ...parsed, email: `${local}${suffix}` });
+}
+
+const domainPattern = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+export function normalizeEmailDomain(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const domain = input.trim().toLowerCase().replace(/^@/, '');
+  return domainPattern.test(domain) ? domain : null;
+}
+
+export const attendeeChoices = [50, 100, 250, 500, 1000];
+
+export class InvalidOptionsError extends Error {}
+
+// Validates the options body shared by /setup and the pre-Prepare editor.
+export function parseWorkshopOptions(body: unknown): WorkshopOptions {
+  const input = (body ?? {}) as Partial<Record<keyof WorkshopOptions, unknown>>;
+  const attendees = Number(input.expectedAttendees);
+  const mode: WorkshopMode = input.mode === 'vercel-team' ? 'vercel-team' : 'app';
+  const emailDomain = mode === 'vercel-team' ? normalizeEmailDomain(input.emailDomain) : null;
+  if (mode === 'vercel-team' && !emailDomain) {
+    throw new InvalidOptionsError('Enter the email domain your Vercel team has verified, for example workshop.example.com');
+  }
+  return {
+    expectedAttendees: attendeeChoices.includes(attendees) ? attendees : defaultWorkshopOptions.expectedAttendees,
+    requireEmail: mode === 'app' && input.requireEmail === true,
+    mode,
+    emailDomain,
+  };
 }

@@ -82,5 +82,31 @@ code { font-family: var(--font-mono), monospace; }
 .choice.selected { border-color: #000; background: #000; color: #fff; }
 .choice-group .small { margin: 0; }
 .loading { color: var(--muted); }
+.mode-choices { display: grid; gap: 10px; }
+.mode-choice { position: relative; display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: #fff; cursor: pointer; }
+.mode-choice input { position: absolute; opacity: 0; pointer-events: none; }
+.mode-choice.selected { border-color: #000; box-shadow: inset 0 0 0 1px #000; }
+.mode-title { font-size: 14px; font-weight: 500; }
+.mode-detail { font-size: 13px; line-height: 1.5; color: var(--muted); }
+.field { display: grid; gap: 6px; }
+.field-label { font-size: 14px; font-weight: 500; }
+.field .small { margin: 0; }
+.inline-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.vercel-panel, .integration-panel { grid-column: 1 / -1; display: grid; gap: 16px; }
+.step { margin: 6px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.vercel-panel dl div, .integration-panel dl div { grid-template-columns: 160px 1fr; }
+.vercel-panel dd, .integration-panel dd { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; text-align: right; }
+.vercel-panel dd code, .integration-panel dd code { min-width: 0; overflow-wrap: anywhere; }
+.tiny { min-height: 26px; padding: 0 9px; border-color: var(--border); background: #fff; color: var(--fg); font-size: 12px; }
+.search.inline { flex: 1; min-width: 220px; min-height: 32px; font-size: 13px; }
+.linkish { min-height: 0; padding: 0; border: 0; background: none; color: var(--blue); font-size: inherit; font-weight: 500; cursor: pointer; }
+.badge.pending { background: #fff1e0; color: #a35200; }
+.scim-connected, .scim-form { display: grid; gap: 12px; }
+.progress { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--soft); }
+.progress p { margin: 0; font-size: 14px; line-height: 1.55; }
+.progress.done { border-color: #b7e4c7; background: #eefbee; }
+.progress.failed { border-color: #f5c2c7; background: #fff5f5; }
+.spinner { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 3px; border: 2px solid var(--border); border-top-color: #000; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
-@media (max-width: 760px) { .code-inline { flex-direction: column; } .list-toolbar { flex-direction: column; } .attendees th:nth-child(3), .attendees td:nth-child(3) { display: none; } main { width: min(100% - 24px, 620px); padding-top: 32px; } .console-grid { grid-template-columns: 1fr; } .panel { padding: 20px; } header { margin-bottom: 28px; } .mark { display: none; } .url-box { align-items: stretch; flex-direction: column; padding: 12px; } .url-box code { white-space: normal; overflow-wrap: anywhere; } }
+@media (max-width: 760px) { .code-inline { flex-direction: column; } .list-toolbar { flex-direction: column; } .attendees th:nth-child(3), .attendees td:nth-child(3) { display: none; } main { width: min(100% - 24px, 620px); padding-top: 32px; } .console-grid { grid-template-columns: 1fr; } .panel { padding: 20px; } .vercel-panel dl div, .integration-panel dl div { grid-template-columns: 1fr; gap: 6px; } .vercel-panel dd, .integration-panel dd { justify-content: flex-start; text-align: left; } header { margin-bottom: 28px; } .mark { display: none; } .url-box { align-items: stretch; flex-direction: column; padding: 12px; } .url-box code { white-space: normal; overflow-wrap: anywhere; } }
