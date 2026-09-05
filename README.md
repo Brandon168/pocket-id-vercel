@@ -68,7 +68,7 @@ After **Prepare workshop**, the console shows a **Vercel team** panel with three
 
 1. **SAML → Configure → Custom OIDC.** Provider name `Pocket ID`. Vercel shows a login redirect URL of the form `https://auth.vercel.com/sso/oidc/<id>/callback`; Pocket ID already accepts it through a wildcard, so nothing to paste back (you can pin the exact URL from the console if you prefer). Paste the **Discovery endpoint**, **Client ID**, and **Client secret** from the console into the dialog.
 2. **Directory Sync → Configure → Custom SCIM.** Directory provider `Pocket ID`, authentication by bearer token. Vercel shows a SCIM endpoint (`https://auth.vercel.com/scim/v2.0/<id>`) and a token; paste both into step 2 of the console and click **Connect and push now**. Once the first push lands, Vercel lets you save the directory. From then on every signup reaches Vercel within about a minute (Pocket ID pushes ~15 s after the signup, Vercel takes up to a minute to apply it), Pocket ID re-syncs hourly, and **Sync now** is there for after you fix an attendee by hand.
-3. **Map groups and enable EMU.** Map the `workshop` group to **Member** (or an Access Group). Attendees are also placed in `vercel-role-member`, which Vercel treats as the Member role even with no mapping, so nobody lands as a viewer. Keep yourself an Owner before confirming the first sync, then enable Enterprise Managed Users.
+3. **Map groups, enforce SAML, enable EMU.** In the Directory Sync dialog map `workshop` → **Member** (or an Access Group) and `vercel-role-owner` → **Owner**; `vercel-role-member`/`vercel-role-owner` are Vercel's reserved names, so they map correctly even if you skip this. Your `instructor` identity is in `vercel-role-owner` (email `instructor@<domain>` by default, or your own Vercel login email; change it in the console), so the first sync cannot lock you out. Then on the Security page **Re-Authenticate** with SAML (sign in through Pocket ID as `instructor`), turn on **Require team members to log in with SAML**, and enable **Enterprise Managed Users**. EMU is what removes account creation for attendees: without it, Vercel recognises them after SSO but still asks them to create or link a regular Vercel account.
 
 Set the **team slug** in the console: Pocket ID then shows attendees a **Vercel** tile that opens `https://vercel.com/login?saml=<slug>`, and the console shows the same link for your slide.
 
@@ -132,7 +132,7 @@ Pocket ID embeds a single-host actor system, so exactly one process may run per 
 - **Scale to zero.** A one-minute cron stops and snapshots the Sandbox after `SANDBOX_IDLE_MINUTES` (default 120) without traffic. The next request resumes it inside the same HTTP call. Graceful stop clears the stale actor-host row so restart is never blocked.
 - **Shared database.** One Neon project holds Pocket ID's tables and the controller's lifecycle, workshop, secrets, and Vercel-connection tables. Set `CONTROLLER_DATABASE_URL` to split them.
 
-> The controller and lifecycle were load-tested in an earlier iteration. The Deploy Button path with first-run setup and Vercel team mode are newer; run your chosen mode end to end before relying on it for an event.
+> The controller and lifecycle were load-tested in an earlier iteration. Vercel team mode was verified against a real Enterprise team on 2026-09-05 up to and including SSO sign-in, SCIM push, and role mapping; the EMU step itself needs a verified domain and was documented from Vercel's dialogs. Run your chosen mode end to end before relying on it for an event.
 
 ## Environment variables
 

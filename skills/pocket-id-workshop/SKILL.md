@@ -80,7 +80,7 @@ curl -s -u ":<password>" https://<project>.vercel.app/api/workshop/vercel
      -d '{"endpoint":"https://auth.vercel.com/scim/v2.0/<id>","token":"se_…"}' https://<project>.vercel.app/api/workshop/vercel
    ```
    This pushes immediately; Vercel lets you save the directory once the first push lands. Afterwards every signup is pushed automatically (~15 s) and Vercel applies it within about a minute.
-3. **Map groups → enable EMU.** Map `workshop` to **Member** (or an Access Group). Attendees are also in `vercel-role-member`, which Vercel treats as Member even unmapped. The Owner must keep themselves an Owner before confirming the first sync, then enable Enterprise Managed Users (needs SSO + Directory Sync + verified domain).
+3. **Map groups → enforce SAML → enable EMU.** Map `workshop` to **Member** (or an Access Group) and `vercel-role-owner` to **Owner**; unmapped groups default to Viewer, but `vercel-role-*` are Vercel's reserved names and map on their own. The `instructor` identity is pushed in `vercel-role-owner` (email `instructor@<domain>`, or set `{"instructorEmail": "<owner's Vercel login email>"}` via PATCH to keep an existing account), so the first sync cannot lock the Owner out. Then on the Security page: **Re-Authenticate** via SAML (sign in through Pocket ID as `instructor` — mint a login link with `POST /api/workshop/admin-login` first), enable **Require team members to log in with SAML**, and enable **Enterprise Managed Users**. EMU requires enforced SAML + Directory Sync + a verified domain. Without EMU, SSO works but Vercel asks each attendee to create or link a regular Vercel account, which defeats the purpose.
 4. Set the team slug so attendees get a **Vercel** tile and the console shows the sign-in link:
    ```bash
    curl -s -u ":<password>" -X PATCH -H 'content-type: application/json' -d '{"teamSlug":"<slug>"}' https://<project>.vercel.app/api/workshop/vercel
@@ -113,6 +113,9 @@ Or by hand: `vercel integration resource remove <project>-db --disconnect-all --
 | Console 401 on another device | Use the instructor password with an empty username in the Basic-auth prompt, or set `WORKSHOP_ADMIN_SECRET` on the project and redeploy if lost. |
 | Passkeys stop working | Hostname changed (rename, custom domain, deployment URL). Not recoverable; redeploy. |
 | Attendee provisioned as viewer | Directory Sync role mapping missing; map `workshop` → Member. `vercel-role-member` covers this by default. |
+| Attendee reaches Vercel but is asked to "Connect Account" / sign up | EMU is not enabled on the team (needs enforced SAML + Directory Sync + verified domain). |
+| Attendee shows as "Pending invitation" in the team | Expected until they complete SSO sign-in; Vercel applies SCIM pushes within about a minute. |
+| Vercel's provider picker shows "Continue setup" drafts | Stale drafts from earlier attempts; choosing Custom OIDC / Custom SCIM resets them, which is fine. |
 | Attendee typed the wrong email domain | Cannot happen in team mode; the proxy rewrites it. Check `/api/workshop/attendees`. |
 | Neon install fails during deploy | Organization child team or plan choice required; see deploy.sh's message. Use `--database-url` or a standalone team. |
 | `/api/lifecycle/status` shows `failed` | The next real request retries the start automatically; read `lastError`. |

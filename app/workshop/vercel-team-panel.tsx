@@ -258,11 +258,13 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
         </div>
       )}
 
-      <h3 className="step">3. Map groups, enable EMU, sign in</h3>
+      <h3 className="step">3. Map groups, enforce SAML, enable EMU</h3>
       <p className="muted small">
-        Map <code>{status.workshopGroup}</code> to <strong>Member</strong> (or an Access Group). Attendees are also placed in <code>{status.memberGroup}</code>, which
-        Vercel treats as the Member role even with no mapping, so nobody lands as a viewer. Then enable Enterprise Managed Users.
-        Attendees sign in at <code>{status.signInUrl}</code>{copyButton(status.signInUrl, 'signin')}.
+        In the Directory Sync dialog map <code>{status.workshopGroup}</code> to <strong>Member</strong> (or an Access Group) and <code>{status.ownerGroup}</code> to <strong>Owner</strong>.
+        Unmapped groups default to Viewer; <code>{status.memberGroup}</code> and <code>{status.ownerGroup}</code> are Vercel&apos;s reserved names, so they map correctly even if you skip this.
+        Then, on the Security page: <strong>Re-Authenticate</strong> with SAML (sign in through Pocket ID as <code>instructor</code>; use <em>Open Pocket ID admin</em> first), turn on
+        <strong> Require team members to log in with SAML</strong>, and enable <strong>Enterprise Managed Users</strong>. EMU needs enforced SAML, Directory Sync, and the verified
+        domain; without it Vercel asks every attendee to create a regular Vercel account. Attendees sign in at <code>{status.signInUrl}</code>{copyButton(status.signInUrl, 'signin')}.
       </p>
       <div className="callout">
         <p>
