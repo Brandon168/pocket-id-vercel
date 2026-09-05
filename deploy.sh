@@ -170,7 +170,8 @@ fi
 
 # Team mode needs an email domain the team can verify. Show what this team
 # already owns so the instructor picks a subdomain instead of buying one.
-DOMAINS="$(vercel domains ls --scope "$SCOPE" 2>/dev/null | awk 'NR>3 && NF>0 {print $1}' | grep -v '^Domain$' | head -12 || true)"
+# (the CLI prints this table on stderr; rows are indented, the header row starts with "Domain")
+DOMAINS="$(vercel domains ls --scope "$SCOPE" 2>&1 | awk '/^  [A-Za-z0-9]/ && $1 != "Domain" {print $1}' | head -12 || true)"
 if [[ -n "$DOMAINS" ]]; then
   step "Domains this team already owns"
   note "If attendees will get Vercel accounts (Vercel team mode), use a dedicated subdomain of one of these"
