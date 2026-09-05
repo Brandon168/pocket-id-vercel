@@ -635,6 +635,30 @@ export function getWorkshopName(): string {
   return workshopName;
 }
 
+// Re-applies the group restriction on the mode's client. Runs once per
+// process from the console's status call, so deployments prepared by earlier
+// versions (which created unrestricted clients) heal without a redeploy.
+const repaired = new Set<string>();
+
+export async function repairConfigurationOnce(): Promise<void> {
+  if (repaired.has(workshopName)) return;
+  const [setup, options, state] = await Promise.all([
+    getWorkshopSetup(workshopName),
+    getWorkshopOptions(workshopName),
+    getLifecycleState(workshopName),
+  ]);
+  if (!setup || state.status !== 'running') return;
+  repaired.add(workshopName);
+  try {
+    const origin = await getKnownSandboxOrigin();
+    const groupIds = await attendeeGroupIds(origin, options.mode);
+    await restrictClientToGroups(origin, options.mode === 'vercel-team' ? vercelSsoClientId : 'workshop-app', groupIds);
+  } catch (error) {
+    repaired.delete(workshopName);
+    console.error('Configuration repair failed', error);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Vercel team mode: what the instructor pastes into Vercel, and the SCIM push.
 

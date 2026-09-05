@@ -1,5 +1,6 @@
+import { after } from 'next/server';
 import { isWorkshopAdmin, workshopUnauthorized } from '@/lib/workshop-auth';
-import { estimateSetupSeconds, getWorkshopName, signupTokenCount } from '@/lib/workshop';
+import { estimateSetupSeconds, getWorkshopName, repairConfigurationOnce, signupTokenCount } from '@/lib/workshop';
 import { getWorkshopOptions, getWorkshopSetup, isPrepareInProgress } from '@/lib/workshop-store';
 
 export const runtime = 'nodejs';
@@ -14,6 +15,8 @@ export async function GET(request: Request): Promise<Response> {
       getWorkshopOptions(name),
       isPrepareInProgress(name),
     ]);
+    // Never wakes the Sandbox; only touches Pocket ID when it is already up.
+    after(repairConfigurationOnce);
     return Response.json(
       {
         setup,
