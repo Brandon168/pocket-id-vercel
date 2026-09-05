@@ -37,6 +37,9 @@ export const defaultVercelCallbackUrl = 'https://auth.vercel.com/sso/oidc/*/call
 // Directory Sync falls back to this group name to assign the Member role when
 // no explicit mapping is configured, so attendees never land as viewers.
 export const vercelMemberGroupName = 'vercel-role-member';
+// The instructor always sits in this group so the first Directory Sync run
+// cannot demote or remove the person who confirmed it.
+export const vercelOwnerGroupName = 'vercel-role-owner';
 export const workshopGroupName = 'workshop';
 
 export function signupTokenCount(expectedAttendees: number): number {
@@ -83,7 +86,7 @@ async function pause(): Promise<void> {
 }
 
 type Paginated<T> = { data?: T[] };
-type User = { id: string; username: string; isAdmin: boolean };
+type User = { id: string; username: string; isAdmin: boolean; email?: string | null; firstName?: string; lastName?: string; displayName?: string };
 type Group = { id: string; name: string; users?: Array<{ id: string }> };
 
 async function configureSignups(origin: string, options: WorkshopOptions): Promise<void> {
@@ -222,10 +225,16 @@ async function restrictClientToGroups(origin: string, clientId: string, groupIds
   await pause();
 }
 
+const groupFriendlyNames: Record<string, string> = {
+  [vercelMemberGroupName]: 'Vercel members',
+  [vercelOwnerGroupName]: 'Vercel owners',
+};
+
+// Every group allowed to use the mode's client.
 async function attendeeGroupIds(origin: string, mode: WorkshopMode): Promise<string[]> {
-  const names = mode === 'vercel-team' ? [workshopGroupName, vercelMemberGroupName] : [workshopGroupName];
+  const names = mode === 'vercel-team' ? [workshopGroupName, vercelMemberGroupName, vercelOwnerGroupName] : [workshopGroupName];
   const ids: string[] = [];
-  for (const name of names) ids.push((await ensureGroup(origin, name, name === vercelMemberGroupName ? 'Vercel members' : name)).id);
+  for (const name of names) ids.push((await ensureGroup(origin, name, groupFriendlyNames[name] ?? name)).id);
   return ids;
 }
 
@@ -314,6 +323,30 @@ async function addAdminToGroup(origin: string, groupId: string, adminId: string)
   await pause();
 }
 
+// Directory Sync matches people by email. The instructor's email decides
+// which Vercel account stays Owner: instructor@<domain> for an EMU team, or
+// the instructor's own Vercel login email to keep an existing account.
+export function defaultInstructorEmail(domain: string): string {
+  return `instructor@${domain}`;
+}
+
+async function setInstructorEmail(origin: string, admin: User, email: string): Promise<void> {
+  if ((admin.email ?? '').toLowerCase() === email.toLowerCase()) return;
+  await pocketApi(origin, `/users/${admin.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      username: admin.username,
+      firstName: admin.firstName || 'Instructor',
+      lastName: admin.lastName ?? '',
+      displayName: admin.displayName ?? '',
+      email,
+      emailVerified: true,
+      isAdmin: true,
+    }),
+  });
+  await pause();
+}
+
 // One-time login links. Pocket ID issues a 6-character code for TTLs up to
 // 15 minutes and a 12-character code beyond that; the code page auto-submits
 // either. Links are minted on demand rather than stored, because a stale
@@ -395,7 +428,12 @@ async function provisionWorkshop(requestOrigin: string): Promise<WorkshopSetup> 
   if (options.mode === 'vercel-team') {
     const memberGroup = await ensureGroup(origin, vercelMemberGroupName, 'Vercel members');
     attendeeGroupIds.push(memberGroup.id);
-    await ensureVercelSsoClient(origin, attendeeGroupIds);
+    // The instructor is pushed too, as an Owner, so confirming Directory
+    // Sync never locks the instructor out of the team.
+    const ownerGroup = await ensureGroup(origin, vercelOwnerGroupName, 'Vercel owners');
+    await addAdminToGroup(origin, ownerGroup.id, admin.id);
+    await setInstructorEmail(origin, admin, defaultInstructorEmail(options.emailDomain ?? ''));
+    await ensureVercelSsoClient(origin, [...attendeeGroupIds, ownerGroup.id]);
   } else {
     await ensureAppClient(origin, group.id);
   }
@@ -602,7 +640,10 @@ export type VercelTeamStatus = {
   signInUrl: string;
   emailDomain: string;
   memberGroup: string;
+  ownerGroup: string;
   workshopGroup: string;
+  // Email Directory Sync uses to keep the instructor an Owner.
+  instructorEmail: string | null;
   scim: {
     endpoint: string;
     lastSyncedAt: string | null;
@@ -668,6 +709,16 @@ export async function getVercelTeamStatus(requestOrigin: string): Promise<Vercel
       // Status is decorative; the stored endpoint is still shown.
     }
   }
+  let instructorEmail: string | null = null;
+  if (state.status === 'running') {
+    try {
+      const origin = await getKnownSandboxOrigin();
+      const found = await pocketApi<Paginated<User>>(origin, '/users?search=instructor&pagination[limit]=5');
+      instructorEmail = found.data?.find((user) => user.username === 'instructor')?.email ?? null;
+    } catch {
+      // Decorative.
+    }
+  }
   return {
     issuer,
     discoveryUrl: `${issuer}/.well-known/openid-configuration`,
@@ -678,7 +729,9 @@ export async function getVercelTeamStatus(requestOrigin: string): Promise<Vercel
     signInUrl: vercelSignInUrl(connection.teamSlug),
     emailDomain: options.emailDomain ?? '',
     memberGroup: vercelMemberGroupName,
+    ownerGroup: vercelOwnerGroupName,
     workshopGroup: workshopGroupName,
+    instructorEmail,
     scim,
     sandboxRunning: state.status === 'running',
   };
@@ -791,6 +844,18 @@ export async function updateVercelClient(patch: { callbackUrl?: string; teamSlug
     groupIds,
   );
   await saveVercelConnection(workshopName, { ...connection, callbackUrl, teamSlug });
+}
+
+// Changes which Vercel account the instructor's Pocket ID identity maps to.
+export async function updateInstructorEmail(email: string): Promise<void> {
+  await requireVercelMode();
+  const trimmed = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) throw new InvalidInputError('Enter a full email address');
+  const origin = await getKnownSandboxOrigin();
+  const found = await pocketApi<Paginated<User>>(origin, '/users?search=instructor&pagination[limit]=5');
+  const admin = found.data?.find((user) => user.username === 'instructor');
+  if (!admin) throw new Error("The 'instructor' user does not exist yet; prepare the workshop first");
+  await setInstructorEmail(origin, admin, trimmed);
 }
 
 // ---------------------------------------------------------------------------

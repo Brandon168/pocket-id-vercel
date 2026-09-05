@@ -3,6 +3,7 @@ import {
   connectVercelDirectorySync,
   getVercelTeamStatus,
   rotateVercelClientSecret,
+  updateInstructorEmail,
   updateVercelClient,
 } from '@/lib/workshop';
 import { InvalidInputError } from '@/lib/workshop';
@@ -46,17 +47,21 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-// Adjust the SSO client: { callbackUrl } to pin Vercel's exact redirect URL,
+// Adjust the connection: { callbackUrl } to pin Vercel's exact redirect URL,
 // { teamSlug } for the launch URL and sign-in link (empty string clears it),
-// or { rotateSecret: true } to issue a fresh client secret.
+// { instructorEmail } to choose which Vercel account stays Owner, or
+// { rotateSecret: true } to issue a fresh client secret.
 export async function PATCH(request: Request): Promise<Response> {
   if (!(await isWorkshopAdmin(request))) return workshopUnauthorized();
   try {
-    const body = (await request.json().catch(() => ({}))) as { callbackUrl?: unknown; teamSlug?: unknown; rotateSecret?: unknown };
+    const body = (await request.json().catch(() => ({}))) as {
+      callbackUrl?: unknown; teamSlug?: unknown; rotateSecret?: unknown; instructorEmail?: unknown;
+    };
     const patch: { callbackUrl?: string; teamSlug?: string | null } = {};
     if (typeof body.callbackUrl === 'string') patch.callbackUrl = body.callbackUrl;
     if (typeof body.teamSlug === 'string' || body.teamSlug === null) patch.teamSlug = body.teamSlug;
     if (Object.keys(patch).length) await updateVercelClient(patch);
+    if (typeof body.instructorEmail === 'string') await updateInstructorEmail(body.instructorEmail);
     if (body.rotateSecret === true) await rotateVercelClientSecret();
     return Response.json(await getVercelTeamStatus(new URL(request.url).origin), noStore);
   } catch (error) {

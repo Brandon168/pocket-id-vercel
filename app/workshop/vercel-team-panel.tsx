@@ -12,7 +12,9 @@ export type VercelTeamStatus = {
   signInUrl: string;
   emailDomain: string;
   memberGroup: string;
+  ownerGroup: string;
   workshopGroup: string;
+  instructorEmail: string | null;
   scim: { endpoint: string; lastSyncedAt: string | null; lastAttemptAt: string | null; lastError: string | null } | null;
   sandboxRunning: boolean;
 };
@@ -35,6 +37,8 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
   const [callbackDraft, setCallbackDraft] = useState('');
   const [editingSlug, setEditingSlug] = useState(false);
   const [slugDraft, setSlugDraft] = useState('');
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [emailDraft, setEmailDraft] = useState('');
   const [scimEndpoint, setScimEndpoint] = useState('');
   const [scimToken, setScimToken] = useState('');
   const [scimOpen, setScimOpen] = useState(false);
@@ -43,6 +47,7 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
     setStatus(result);
     setCallbackDraft(result.callbackUrl);
     setSlugDraft(result.teamSlug ?? '');
+    setEmailDraft(result.instructorEmail ?? '');
   }
 
   useEffect(() => {
@@ -74,6 +79,12 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
   const saveSlug = () => run('slug', 'client', async () => {
     const result = await api<VercelTeamStatus>('/api/workshop/vercel', { method: 'PATCH', ...json({ teamSlug: slugDraft }) });
     setEditingSlug(false);
+    return result;
+  });
+
+  const saveEmail = () => run('email', 'client', async () => {
+    const result = await api<VercelTeamStatus>('/api/workshop/vercel', { method: 'PATCH', ...json({ instructorEmail: emailDraft }) });
+    setEditingEmail(false);
     return result;
   });
 
@@ -181,6 +192,23 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
             )}
           </dd>
         </div>
+        <div>
+          <dt>Your account as Owner</dt>
+          <dd>
+            {editingEmail ? (
+              <>
+                <input className="search inline" type="email" value={emailDraft} onChange={(event) => setEmailDraft(event.target.value)} placeholder={`instructor@${status.emailDomain}`} spellCheck={false} autoCapitalize="none" />
+                <button className="tiny" disabled={busy === 'email'} onClick={saveEmail}>{busy === 'email' ? 'Saving…' : 'Save'}</button>
+                <button className="tiny" onClick={() => { setEditingEmail(false); setEmailDraft(status.instructorEmail ?? ''); setError(null); }}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <code>{status.instructorEmail ?? (status.sandboxRunning ? 'not set' : 'unknown while Pocket ID is idle')}</code>
+                <button className="tiny" onClick={() => setEditingEmail(true)}>Change</button>
+              </>
+            )}
+          </dd>
+        </div>
       </dl>
       {error?.at === 'client' && <p className="error">{error.message}</p>}
       <p className="muted small">
@@ -233,9 +261,17 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
       <h3 className="step">3. Map groups, enable EMU, sign in</h3>
       <p className="muted small">
         Map <code>{status.workshopGroup}</code> to <strong>Member</strong> (or an Access Group). Attendees are also placed in <code>{status.memberGroup}</code>, which
-        Vercel treats as the Member role even with no mapping, so nobody lands as a viewer. Keep yourself an Owner before confirming the first sync,
-        then enable Enterprise Managed Users. Attendees sign in at <code>{status.signInUrl}</code>{copyButton(status.signInUrl, 'signin')}.
+        Vercel treats as the Member role even with no mapping, so nobody lands as a viewer. Then enable Enterprise Managed Users.
+        Attendees sign in at <code>{status.signInUrl}</code>{copyButton(status.signInUrl, 'signin')}.
       </p>
+      <div className="callout">
+        <p>
+          <strong>You will not lock yourself out.</strong> The first sync rewrites every member&apos;s role, including yours. Your <code>instructor</code> identity is
+          pushed too, in <code>{status.ownerGroup}</code>, which Vercel maps to <strong>Owner</strong>. Its email decides which account that is:
+          <code> instructor@{status.emailDomain}</code> (default) becomes a new managed Owner you sign in to through Pocket ID, right for an EMU team.
+          Change it to your own Vercel login email if you want your existing account to stay Owner on a team without EMU.
+        </p>
+      </div>
 
       {error?.at === 'load' && <p className="error">{error.message}</p>}
     </section>
