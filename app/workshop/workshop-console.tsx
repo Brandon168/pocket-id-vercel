@@ -345,6 +345,41 @@ export function WorkshopConsole() {
         </p>
       </section>
 
+      <section className="panel admin-panel">
+        <div>
+          <p className="eyebrow">Instructor access</p>
+          <h2>Start as admin</h2>
+        </div>
+        <dl>
+          <div><dt>Username</dt><dd><code>{setup.adminUsername}</code></dd></div>
+          <div><dt>Admin: users</dt><dd><a href="/settings/admin/users" target="_blank" rel="noreferrer">/settings/admin/users</a></dd></div>
+          <div><dt>Admin: OIDC clients</dt><dd><a href="/settings/admin/oidc-clients" target="_blank" rel="noreferrer">/settings/admin/oidc-clients</a></dd></div>
+        </dl>
+        <button className="primary" disabled={openingAdmin} onClick={openAdmin}>
+          {openingAdmin ? 'Signing you in…' : 'Open Pocket ID admin in a new tab'}
+        </button>
+        <p className="muted small">
+          Each click creates a fresh one-time sign-in for <code>{setup.adminUsername}</code> and opens the admin
+          Users page. No code to type. Once there, add a passkey under <strong>Settings → Account</strong> so you
+          can sign in normally later. The <strong>Administration</strong> section is in the Settings sidebar.
+          You will also see an admin named <code>static-api-user-…</code>: that is this console&apos;s service account. Leave it.
+        </p>
+        {adminLogin?.popupBlocked && (
+          <div className="secret">
+            <p className="secret-label">Your browser blocked the new tab. Open this link instead:</p>
+            <div className="url-box">
+              <code>{adminLogin.loginUrl}</code>
+              <a className="secondary link-button" href={adminLogin.loginUrl} target="_blank" rel="noreferrer">Open</a>
+            </div>
+            <p className="muted small">Valid for one hour, works once. Click the button again for a new one.</p>
+          </div>
+        )}
+        {adminLogin && !adminLogin.popupBlocked && (
+          <p className="muted small">Opened in a new tab. Click the button again if you need another sign-in.</p>
+        )}
+        {error && <p className="error">{error}</p>}
+      </section>
+
       {vercelTeam && <VercelTeamPanel copy={copy} copied={copied} />}
 
       {!vercelTeam && (
@@ -367,37 +402,6 @@ export function WorkshopConsole() {
         </section>
       )}
 
-      <section className="panel admin-panel">
-        <div>
-          <p className="eyebrow">Instructor access</p>
-          <h2>Start as admin</h2>
-        </div>
-        <dl>
-          <div><dt>Username</dt><dd><code>{setup.adminUsername}</code></dd></div>
-          <div><dt>Admin: users</dt><dd><a href="/settings/admin/users" target="_blank" rel="noreferrer">/settings/admin/users</a></dd></div>
-          <div><dt>Admin: OIDC clients</dt><dd><a href="/settings/admin/oidc-clients" target="_blank" rel="noreferrer">/settings/admin/oidc-clients</a></dd></div>
-        </dl>
-        <button className="primary" disabled={openingAdmin} onClick={openAdmin}>
-          {openingAdmin ? 'Signing you in…' : 'Open Pocket ID admin in a new tab'}
-        </button>
-        <p className="muted small">
-          Each click creates a fresh one-time sign-in for <code>{setup.adminUsername}</code> and opens the admin
-          Users page. No code to type. Once there, add a passkey under <strong>Settings → Account</strong> so you
-          can sign in normally later. The <strong>Administration</strong> section is in the Settings sidebar.
-        </p>
-        {adminLogin && (
-          <div className="secret">
-            <p className="secret-label">{adminLogin.popupBlocked ? 'Your browser blocked the new tab. Open this link instead:' : 'Opened in a new tab. If it did not appear:'}</p>
-            <div className="url-box">
-              <code>{adminLogin.loginUrl}</code>
-              <a className="secondary link-button" href={adminLogin.loginUrl} target="_blank" rel="noreferrer">Open</a>
-            </div>
-            <p className="muted small">Valid for one hour, works once. Click the button again for a new one.</p>
-          </div>
-        )}
-        {error && <p className="error">{error}</p>}
-      </section>
-
       <section className="panel help-panel">
         <div className="panel-heading">
           <div>
@@ -410,6 +414,7 @@ export function WorkshopConsole() {
           <li><strong>No Touch ID / Windows Hello?</strong> At the passkey step they can pick &quot;use a phone&quot; and scan the QR with a personal phone.</li>
           <li><strong>Passkeys blocked entirely?</strong> <strong>Skip for now</strong> keeps them signed in for 30 days on that device.</li>
           <li><strong>Signed out, or on another device, with no passkey?</strong> Ask for their username (it is on their Settings → Account page if they are still signed in anywhere), find them below, and click <strong>Login code</strong>. Send the link or have them type the code. Works once, lasts an hour.</li>
+          <li><strong>Testing the QR yourself?</strong> A device that is already signed in to Pocket ID (yours, or an attendee re-scanning) gets a choice to continue to the account or sign out and register someone new.</li>
           <li><strong>Tip for your signup slide:</strong> ask attendees to use <code>firstname-lastname</code> as their username. Name and email are optional in Pocket ID, so the username is how you will find people.</li>
           {vercelTeam && (
             <li><strong>Vercel account not showing up?</strong> Signups are pushed to Vercel about 15 seconds after they happen. If someone is still missing after a minute, click <strong>Sync now</strong> above, then have them sign in at the sign-in link shown in the Vercel team panel.</li>

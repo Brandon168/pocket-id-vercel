@@ -3,7 +3,7 @@ import { WorkshopConsole } from './workshop-console';
 import './workshop.css';
 
 export const metadata: Metadata = {
-  title: 'Workshop setup · Pocket ID',
+  title: 'Instructor console · Pocket ID',
   robots: { index: false, follow: false },
 };
 
@@ -16,7 +16,7 @@ export default function WorkshopPage() {
         <div className="mark">P</div>
         <div>
           <p className="eyebrow">Pocket ID on Vercel</p>
-          <h1>Workshop setup</h1>
+          <h1>Instructor console</h1>
           <p className="lede">One signup link for the room. One admin login for the instructor.</p>
         </div>
       </header>
