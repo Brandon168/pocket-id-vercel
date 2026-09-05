@@ -34,6 +34,28 @@ Two clicks after the deploy finishes. The console can also change options and re
 
 Pro or Enterprise is required for the deploying team: the idle cron runs every minute and Sandbox sessions exceed Hobby limits. The production domain must stay publicly reachable (see below).
 
+### Or from your terminal
+
+Same result, no GitHub clone, no prompts, about 40 seconds:
+
+```bash
+vercel login                                   # once
+curl -fsSL https://raw.githubusercontent.com/Brandon168/pocket-id-vercel/main/deploy.sh \
+  | bash -s -- --scope <team-slug> --project idp-ws-<date>-<topic>
+```
+
+It creates the project, installs Neon from the Marketplace, deploys, and opens `/setup` for you. `./deploy.sh --help` lists the options: `--idle-minutes`, `--database-url` to bring your own Postgres (for teams where the Neon Marketplace install is not allowed, such as children of a Vercel Organization), `--existing-project`, `--ref`. Tear down with `./teardown.sh <project> --scope <team> --yes`.
+
+### Or let your agent do it
+
+The repo ships an [agent skill](skills/pocket-id-workshop/SKILL.md) that knows the deploy script, the first-run choices, the Vercel team connection steps, the console's API for running the day, and the teardown:
+
+```bash
+npx skills add Brandon168/pocket-id-vercel@pocket-id-workshop -g -y
+```
+
+Then ask your agent to "set up a passkey identity provider for Thursday's workshop" and answer its three questions.
+
 ### Why the production domain matters
 
 The controller uses `https://<project>.vercel.app` as Pocket ID's `APP_URL`, OIDC issuer, and WebAuthn relying-party ID. Passkeys registered on any other hostname will not work, and neither will a custom domain added later. Standard Deployment Protection leaves this domain public while protecting deployment URLs, which is what you want; do not switch protection to "All Deployments", and do not deploy to a team that enforces authentication on production domains. Attendees have no account to authenticate with yet — that is the whole point — and in Vercel team mode Vercel's SSO service must reach the discovery document and token endpoint server-to-server.
@@ -148,4 +170,6 @@ A stopped Sandbox costs only snapshot storage. `setup.sh` remains for custom hea
 - `lib/secrets.ts` — Neon-backed secrets with atomic single-winner claim and env overrides.
 - `lib/workshop{,-store,-auth}.ts` — provisioning, Vercel SSO/SCIM connection, persistence, instructor access.
 - `lib/sandbox-control.ts`, `lib/lifecycle-store.ts` — Sandbox state machine and lease.
-- `image/Dockerfile`, `setup.sh`, `sandbox-up.mjs`, `sandbox-down.mjs`, `teardown.sh` — optional tooling.
+- `deploy.sh`, `teardown.sh` — terminal equivalents of the Deploy Button and of deleting the project plus its Neon resource.
+- `skills/pocket-id-workshop/SKILL.md` — agent skill covering deploy, setup, team connection, day-of operations, teardown.
+- `image/Dockerfile`, `setup.sh`, `sandbox-up.mjs`, `sandbox-down.mjs` — optional legacy tooling.
