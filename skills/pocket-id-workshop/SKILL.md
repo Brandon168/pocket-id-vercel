@@ -79,13 +79,13 @@ curl -s -u ":<password>" https://<project>.vercel.app/api/workshop/vercel
    curl -s -u ":<password>" -H 'content-type: application/json' \
      -d '{"endpoint":"https://auth.vercel.com/scim/v2.0/<id>","token":"se_…"}' https://<project>.vercel.app/api/workshop/vercel
    ```
-   This pushes immediately; Vercel lets you save the directory once the first push lands. Afterwards every signup is pushed automatically about 15 seconds later.
+   This pushes immediately; Vercel lets you save the directory once the first push lands. Afterwards every signup is pushed automatically (~15 s) and Vercel applies it within about a minute.
 3. **Map groups → enable EMU.** Map `workshop` to **Member** (or an Access Group). Attendees are also in `vercel-role-member`, which Vercel treats as Member even unmapped. The Owner must keep themselves an Owner before confirming the first sync, then enable Enterprise Managed Users (needs SSO + Directory Sync + verified domain).
 4. Set the team slug so attendees get a **Vercel** tile and the console shows the sign-in link:
    ```bash
    curl -s -u ":<password>" -X PATCH -H 'content-type: application/json' -d '{"teamSlug":"<slug>"}' https://<project>.vercel.app/api/workshop/vercel
    ```
-5. Dry run with one throwaway attendee before the event: scan → username + passkey → ~15 s → sign in at `https://vercel.com/login?saml=<slug>` → confirm Member role.
+5. Dry run with one throwaway attendee before the event: scan → username + passkey → wait a minute → sign in at `https://vercel.com/login?saml=<slug>` → confirm Member role.
 
 ## Step 4: run the day
 

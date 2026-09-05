@@ -417,7 +417,7 @@ export function WorkshopConsole() {
           <li><strong>Testing the QR yourself?</strong> A device that is already signed in to Pocket ID (yours, or an attendee re-scanning) gets a choice to continue to the account or sign out and register someone new.</li>
           <li><strong>Tip for your signup slide:</strong> ask attendees to use <code>firstname-lastname</code> as their username. Name and email are optional in Pocket ID, so the username is how you will find people.</li>
           {vercelTeam && (
-            <li><strong>Vercel account not showing up?</strong> Signups are pushed to Vercel about 15 seconds after they happen. If someone is still missing after a minute, click <strong>Sync now</strong> above, then have them sign in at the sign-in link shown in the Vercel team panel.</li>
+            <li><strong>Vercel account not showing up?</strong> Signups reach Vercel within about a minute. If someone is still missing after two, click <strong>Sync now</strong> above, then have them sign in at the sign-in link shown in the Vercel team panel.</li>
           )}
         </ol>
 

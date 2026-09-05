@@ -67,14 +67,14 @@ After **Prepare workshop**, the console shows a **Vercel team** panel with three
 **On the Vercel team** (you must be an Owner): Settings → Security & Privacy → Authentication and User Provisioning.
 
 1. **SAML → Configure → Custom OIDC.** Provider name `Pocket ID`. Vercel shows a login redirect URL of the form `https://auth.vercel.com/sso/oidc/<id>/callback`; Pocket ID already accepts it through a wildcard, so nothing to paste back (you can pin the exact URL from the console if you prefer). Paste the **Discovery endpoint**, **Client ID**, and **Client secret** from the console into the dialog.
-2. **Directory Sync → Configure → Custom SCIM.** Directory provider `Pocket ID`, authentication by bearer token. Vercel shows a SCIM endpoint (`https://auth.vercel.com/scim/v2.0/<id>`) and a token; paste both into step 2 of the console and click **Connect and push now**. Once the first push lands, Vercel lets you save the directory. From then on every signup is pushed automatically about 15 seconds later (bursts share one push), Pocket ID re-syncs hourly, and **Sync now** is there for after you fix an attendee by hand.
+2. **Directory Sync → Configure → Custom SCIM.** Directory provider `Pocket ID`, authentication by bearer token. Vercel shows a SCIM endpoint (`https://auth.vercel.com/scim/v2.0/<id>`) and a token; paste both into step 2 of the console and click **Connect and push now**. Once the first push lands, Vercel lets you save the directory. From then on every signup reaches Vercel within about a minute (Pocket ID pushes ~15 s after the signup, Vercel takes up to a minute to apply it), Pocket ID re-syncs hourly, and **Sync now** is there for after you fix an attendee by hand.
 3. **Map groups and enable EMU.** Map the `workshop` group to **Member** (or an Access Group). Attendees are also placed in `vercel-role-member`, which Vercel treats as the Member role even with no mapping, so nobody lands as a viewer. Keep yourself an Owner before confirming the first sync, then enable Enterprise Managed Users.
 
 Set the **team slug** in the console: Pocket ID then shows attendees a **Vercel** tile that opens `https://vercel.com/login?saml=<slug>`, and the console shows the same link for your slide.
 
 The email domain you entered at `/setup` must be verified on the team. Every attendee is registered as `username@<that domain>` regardless of what they type in the email field, so attendees cannot use the wrong domain and no email is ever sent.
 
-**Attendee flow:** scan the QR → username + passkey → about 15 seconds later they can sign in at `vercel.com/login?saml=<slug>`. They are in the team, and in v0 if the team has it.
+**Attendee flow:** scan the QR → username + passkey → within about a minute they can sign in at `vercel.com/login?saml=<slug>`. They are in the team, and in v0 if the team has it.
 
 ## App mode: pointing your app at Pocket ID
 

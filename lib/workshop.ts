@@ -87,7 +87,7 @@ async function pause(): Promise<void> {
 
 type Paginated<T> = { data?: T[] };
 type User = { id: string; username: string; isAdmin: boolean; email?: string | null; firstName?: string; lastName?: string; displayName?: string };
-type Group = { id: string; name: string; users?: Array<{ id: string }> };
+type Group = { id: string; name: string; friendlyName?: string; users?: Array<{ id: string }> };
 
 async function configureSignups(origin: string, options: WorkshopOptions): Promise<void> {
   const all = await pocketApi<Array<{ key: string; value: string }>>(origin, '/application-configuration/all');
@@ -130,13 +130,26 @@ async function ensureAdmin(origin: string): Promise<User> {
   return created;
 }
 
+// Pocket ID's SCIM push sends friendlyName as the group's displayName, which
+// is what Vercel matches its reserved vercel-role-* names against. So the
+// friendly name must equal the technical name; an existing group with a
+// different friendly name is corrected here.
 async function ensureGroup(origin: string, name: string, friendlyName: string = name): Promise<Group> {
   const found = await pocketApi<Paginated<Group>>(
     origin,
     `/user-groups?search=${encodeURIComponent(name)}&pagination[limit]=5`,
   );
   const existing = found.data?.find((group) => group.name === name);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.friendlyName !== friendlyName) {
+      await pocketApi(origin, `/user-groups/${existing.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ friendlyName, name }),
+      });
+      await pause();
+    }
+    return existing;
+  }
   const created = await pocketApi<Group>(origin, '/user-groups', {
     method: 'POST',
     body: JSON.stringify({ friendlyName, name }),
@@ -225,16 +238,11 @@ async function restrictClientToGroups(origin: string, clientId: string, groupIds
   await pause();
 }
 
-const groupFriendlyNames: Record<string, string> = {
-  [vercelMemberGroupName]: 'Vercel members',
-  [vercelOwnerGroupName]: 'Vercel owners',
-};
-
 // Every group allowed to use the mode's client.
 async function attendeeGroupIds(origin: string, mode: WorkshopMode): Promise<string[]> {
   const names = mode === 'vercel-team' ? [workshopGroupName, vercelMemberGroupName, vercelOwnerGroupName] : [workshopGroupName];
   const ids: string[] = [];
-  for (const name of names) ids.push((await ensureGroup(origin, name, groupFriendlyNames[name] ?? name)).id);
+  for (const name of names) ids.push((await ensureGroup(origin, name)).id);
   return ids;
 }
 
@@ -426,11 +434,11 @@ async function provisionWorkshop(requestOrigin: string): Promise<WorkshopSetup> 
   // join the role group so Directory Sync maps them to Member.
   const attendeeGroupIds = [group.id];
   if (options.mode === 'vercel-team') {
-    const memberGroup = await ensureGroup(origin, vercelMemberGroupName, 'Vercel members');
+    const memberGroup = await ensureGroup(origin, vercelMemberGroupName);
     attendeeGroupIds.push(memberGroup.id);
     // The instructor is pushed too, as an Owner, so confirming Directory
     // Sync never locks the instructor out of the team.
-    const ownerGroup = await ensureGroup(origin, vercelOwnerGroupName, 'Vercel owners');
+    const ownerGroup = await ensureGroup(origin, vercelOwnerGroupName);
     await addAdminToGroup(origin, ownerGroup.id, admin.id);
     await setInstructorEmail(origin, admin, defaultInstructorEmail(options.emailDomain ?? ''));
     await ensureVercelSsoClient(origin, [...attendeeGroupIds, ownerGroup.id]);

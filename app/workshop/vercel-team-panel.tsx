@@ -234,7 +234,7 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
             <button className="secondary" onClick={() => { setScimEndpoint(status.scim?.endpoint ?? ''); setScimOpen(true); setError(null); }}>Replace endpoint or token</button>
           </div>
           <p className="muted small">
-            Every signup is pushed to Vercel automatically about 15 seconds later (bursts share one push), and Pocket ID re-syncs hourly.
+            Every signup is pushed to Vercel automatically within about a minute (Pocket ID pushes ~15 s after the signup; Vercel takes up to a minute to apply it), and Pocket ID re-syncs hourly.
             <strong> Sync now</strong> is for after you fix an attendee by hand.
           </p>
         </div>
