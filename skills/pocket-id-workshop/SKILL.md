@@ -18,7 +18,18 @@ Two modes, chosen once at first run:
 | **App** | An app the room is building | OIDC client `workshop-app` (public, PKCE) accepting any `https://*.vercel.app/api/auth/callback/pocket-id` |
 | **Vercel team** | A Vercel Enterprise team (and v0) via SSO + Directory Sync + Enterprise Managed Users | Confidential client `vercel-sso` with a stored secret, SCIM push, every attendee registered as `username@<verified domain>` |
 
-Before doing anything, ask (or infer) three things: **which mode**, **which Vercel team to deploy into**, and **how many attendees**. For team mode also ask for the **email domain verified on the target team** and the **team slug**.
+Before doing anything, ask (or infer) three things: **which mode**, **which Vercel team to deploy into**, and **how many attendees**. For team mode also settle the **email domain**, the **team slug**, and the **Owner's Vercel login email**.
+
+### Choosing the email domain (team mode)
+
+Enterprise Managed Users requires a domain verified on the participant team with one TXT record. Do not let the user buy a domain or try a `*.vercel.app` host (Vercel's zone cannot be verified). Instead:
+
+```bash
+vercel domains ls --scope <participant-team>     # domains the team already owns
+vercel domains ls --scope <other-team-they-own>  # a domain elsewhere in their account works too
+```
+
+Recommend a **dedicated subdomain per event**, e.g. `workshop.example.com` or `<event>.workshop.example.com`: a subdomain can only be claimed by one team at a time, it never has to point anywhere, and no email is ever sent. If the zone is on Vercel DNS you can add the verification record yourself when Vercel shows it (step 3 below); otherwise the user adds it at their registrar.
 
 ## Step 1: Deploy (about a minute)
 

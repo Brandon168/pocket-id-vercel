@@ -168,6 +168,16 @@ if [[ "$READY" != 1 ]]; then
   note "if it never does, check Deployment Protection: the production domain must stay public."
 fi
 
+# Team mode needs an email domain the team can verify. Show what this team
+# already owns so the instructor picks a subdomain instead of buying one.
+DOMAINS="$(vercel domains ls --scope "$SCOPE" 2>/dev/null | awk 'NR>3 && NF>0 {print $1}' | grep -v '^Domain$' | head -12 || true)"
+if [[ -n "$DOMAINS" ]]; then
+  step "Domains this team already owns"
+  note "If attendees will get Vercel accounts (Vercel team mode), use a dedicated subdomain of one of these"
+  note "as the email domain at /setup, e.g. workshop.<domain>. You verify it later with one TXT record."
+  while IFS= read -r d; do note "  $d"; done <<< "$DOMAINS"
+fi
+
 printf '\n\033[1mDone.\033[0m Open this now, before anyone else does:\n'
 cat <<EOF
 

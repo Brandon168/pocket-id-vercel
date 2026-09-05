@@ -61,7 +61,7 @@ export function OptionsForm({ value, onChange, disabled }: {
             disabled={disabled}
             onChange={(event) => set({ emailDomain: event.target.value })}
           />
-          <span className="muted small">Every attendee is registered as <code>username@{value.emailDomain || 'domain'}</code>, whatever they type. Enterprise Managed Users only accepts addresses on a domain the team has verified; nothing is ever emailed.</span>
+          <span className="muted small">Use a dedicated subdomain of a domain your team already owns, for example <code>workshop.yourcompany.com</code>; you verify it later with one TXT record and it never has to point anywhere. Every attendee is registered as <code>username@{value.emailDomain || 'domain'}</code>, whatever they type; nothing is ever emailed. <code>*.vercel.app</code> hosts cannot be verified.</span>
         </label>
       )}
 

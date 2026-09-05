@@ -73,7 +73,7 @@ After **Prepare workshop**, the console shows a **Vercel team** panel with four 
 
 Set the **team slug** in the console: Pocket ID then shows attendees a **Vercel** tile that opens `https://vercel.com/login?saml=<slug>`, and the console shows the same link for your slide.
 
-The email domain you entered at `/setup` must be verified on the team. Every attendee is registered as `username@<that domain>` regardless of what they type in the email field, so attendees cannot use the wrong domain and no email is ever sent.
+**Choosing the domain.** EMU needs a domain verified on the team with one TXT record. Pick a dedicated subdomain of a domain your team already owns (`vercel domains ls --scope <team>` lists them; `deploy.sh` prints them too), for example `workshop.yourcompany.com`, one per event: a subdomain can only be claimed by one team at a time, it never has to point anywhere, and no email is ever sent. `*.vercel.app` project domains cannot be verified. The email domain you entered at `/setup` must be verified on the team. Every attendee is registered as `username@<that domain>` regardless of what they type in the email field, so attendees cannot use the wrong domain and no email is ever sent.
 
 **Attendee flow:** scan the QR → username + passkey → within about a minute they can sign in at `vercel.com/login?saml=<slug>`. They are in the team, and in v0 if the team has it.
 

@@ -27,7 +27,7 @@ Without EMU, SSO and Directory Sync only *link* existing personal Vercel account
 | An Enterprise team, and to be its **Owner** | Directory Sync and EMU are Enterprise features. |
 | An IdP application | Authorization-code grant, Vercel's login redirect URI registered, ID-token claims `sub`, `email`, `given_name`, `family_name`. **Pocket ID:** the template creates this (`vercel-sso`). |
 | SCIM 2.0 provisioning from the IdP | Vercel gives you an endpoint and a bearer token. **Pocket ID:** paste them into the console. |
-| A domain you control DNS for | Verification is a TXT record. Dedicated subdomains are supported, so `workshop.example.com` works and leaves your apex alone. `*.vercel.app` hosts cannot be verified. |
+| A domain you control DNS for | Verification is a TXT record. Pick a dedicated subdomain of a domain the team already owns (`vercel domains ls --scope <team>`), one per event, e.g. `workshop.example.com`: a subdomain can only be claimed by one team at a time, it never has to point anywhere, and no email is sent. `*.vercel.app` hosts cannot be verified, and there is no need to buy anything. |
 | Your own account kept safe | Directory Sync rewrites every member's role, including yours. Your IdP must assert *you* in an Owner group before the first sync. **Pocket ID:** the template puts `instructor` in `vercel-role-owner` and asks for your Vercel login email at `/setup`. |
 
 ## Before you start
