@@ -105,6 +105,16 @@ export async function acquireLifecycleLease(
   return rows.length === 1;
 }
 
+// Records a new Sandbox session deadline without touching idle tracking.
+export async function updateSessionExpiry(name: string, expiresAt: Date): Promise<void> {
+  const sql = lifecycleSql();
+  await sql`
+    UPDATE pocket_id_sandbox_lifecycle
+    SET session_expires_at = ${expiresAt.toISOString()}, updated_at = now()
+    WHERE name = ${name}
+  `;
+}
+
 export async function markRunning(
   name: string,
   owner: string,

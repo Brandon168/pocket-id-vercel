@@ -10,6 +10,7 @@ import {
   markStarting,
   markStopped,
   touchActivity,
+  updateSessionExpiry,
 } from './lifecycle-store';
 
 const sandboxName = process.env.SANDBOX_NAME ?? 'pocket-id';
@@ -225,7 +226,13 @@ export async function stopIfIdle(): Promise<'kept' | 'stopped'> {
     return 'kept';
   }
 
-  if (Date.now() - state.lastRequestAt.getTime() < idleMinutes * 60_000) return 'kept';
+  if (Date.now() - state.lastRequestAt.getTime() < idleMinutes * 60_000) {
+    // Still in use. The session deadline was set to idle + 5 minutes when
+    // the Sandbox started; keep it at least that far ahead so a busy
+    // workshop never dies mid-session. Runs every minute from the cron.
+    await keepSessionAlive(idleMinutes);
+    return 'kept';
+  }
   const owner = randomUUID();
   if (!(await acquireLifecycleLease(sandboxName, owner, 'stopping', 90))) return 'kept';
   const afterLease = await getLifecycleState(sandboxName);
@@ -250,6 +257,26 @@ export async function stopIfIdle(): Promise<'kept' | 'stopped'> {
   } catch (error) {
     await markFailed(sandboxName, owner, error);
     throw error;
+  }
+}
+
+// Extends the Sandbox session so it always ends at least idle + 5 minutes
+// from now while traffic continues. Vercel caps how far a session can be
+// extended; when the cap is reached the next request after expiry resumes
+// the Sandbox from its snapshot (about a minute of downtime).
+async function keepSessionAlive(idleMinutes: number): Promise<void> {
+  try {
+    const sandbox = await Sandbox.get({ name: sandboxName, resume: false });
+    if (sandbox.status !== 'running' || !sandbox.expiresAt) return;
+    const requiredMs = (idleMinutes + 5) * 60_000;
+    const remaining = sandbox.expiresAt.getTime() - Date.now();
+    // Only extend when the deadline has drifted meaningfully (avoids an API
+    // call every minute); keep at least an hour of headroom on top.
+    if (remaining >= requiredMs - 60 * 60_000) return;
+    await sandbox.extendTimeout(requiredMs - remaining);
+    if (sandbox.expiresAt) await updateSessionExpiry(sandboxName, sandbox.expiresAt);
+  } catch (error) {
+    console.error('Sandbox session extension failed', error);
   }
 }
 
