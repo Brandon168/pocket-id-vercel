@@ -145,7 +145,7 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
         The team needs the domain <code>{status.emailDomain}</code> verified and Enterprise Managed Users available.
       </p>
 
-      <h3 className="step">1. SAML → Configure → <em>Custom OIDC</em></h3>
+      <h3 className="step">1. SAML → Configure → <em>Custom OIDC</em>, then enforce it</h3>
       <p className="muted small">Provider name <code>Pocket ID</code>. Vercel shows a login redirect URL; Pocket ID already accepts it. Paste these three values:</p>
       <dl>
         <div><dt>Discovery endpoint</dt><dd><code>{status.discoveryUrl}</code>{copyButton(status.discoveryUrl, 'discovery')}</dd></div>
@@ -218,8 +218,13 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
         {' '}Setting the team slug gives attendees a <strong>Vercel</strong> tile in Pocket ID that opens <code>{status.signInUrl}</code>.
         {' '}<button className="linkish" disabled={busy === 'rotate'} onClick={rotateSecret}>Rotate secret</button> if it ever leaks.
       </p>
+      <p className="muted small">
+        For the portal&apos;s sign-in test, and again for <strong>Re-Authenticate</strong> on the Security page, sign in through Pocket ID as <code>instructor</code>
+        (use <em>Open Pocket ID admin</em> first). Then turn on <strong>Require team members to log in with SAML</strong>. Enforcing invalidates every personal
+        Vercel token for the team, so finish any CLI work first.
+      </p>
 
-      <h3 className="step">2. Directory Sync → Configure → <em>Custom SCIM</em></h3>
+      <h3 className="step">2. Directory Sync → Configure → <em>Custom SCIM</em> (do not map roles yet)</h3>
       {status.scim && !scimOpen ? (
         <div className="scim-connected">
           <dl>
@@ -254,17 +259,23 @@ export function VercelTeamPanel({ copy, copied }: { copy: (value: string, label:
             <button className="primary" disabled={busy === 'scim' || !scimEndpoint || !scimToken} onClick={connectScim}>{busy === 'scim' ? 'Connecting and pushing…' : 'Connect and push now'}</button>
             {status.scim && <button className="secondary" onClick={() => { setScimOpen(false); setError(null); }}>Cancel</button>}
           </div>
-          <p className="muted small">After the first push succeeds, Vercel lets you save Directory Sync and map groups. The token is stored in Pocket ID only.</p>
+          <p className="muted small">After the first push succeeds, Vercel lets you finish Directory Sync. When it offers role mapping, choose <strong>Set Up Enterprise Managed Users First</strong>; mapping before EMU creates ordinary invitations that stop working once EMU is on. The token is stored in Pocket ID only.</p>
         </div>
       )}
 
-      <h3 className="step">3. Map groups, enforce SAML, enable EMU</h3>
+      <h3 className="step">3. Enable Enterprise Managed Users and verify <code>{status.emailDomain}</code></h3>
       <p className="muted small">
-        In the Directory Sync dialog map <code>{status.workshopGroup}</code> to <strong>Member</strong> (or an Access Group) and <code>{status.ownerGroup}</code> to <strong>Owner</strong>.
-        Unmapped groups default to Viewer; <code>{status.memberGroup}</code> and <code>{status.ownerGroup}</code> are Vercel&apos;s reserved names, so they map correctly even if you skip this.
-        Then, on the Security page: <strong>Re-Authenticate</strong> with SAML (sign in through Pocket ID as <code>instructor</code>; use <em>Open Pocket ID admin</em> first), turn on
-        <strong> Require team members to log in with SAML</strong>, and enable <strong>Enterprise Managed Users</strong>. EMU needs enforced SAML, Directory Sync, and the verified
-        domain; without it Vercel asks every attendee to create a regular Vercel account. Attendees sign in at <code>{status.signInUrl}</code>{copyButton(status.signInUrl, 'signin')}.
+        Turn on the <strong>Enterprise Managed Users</strong> toggle. In the Manage Domains sheet click <em>Configure Domain</em> (open it in a new tab; it
+        navigates away), enter <code>{status.emailDomain}</code>, and add the TXT record Vercel shows at your DNS provider. Verification is automatic within
+        about a minute. Back on the Security page, toggle EMU again, select the domain, and in <strong>Select Teams</strong> confirm only this team; the sheet
+        lists every eligible team you own.
+      </p>
+
+      <h3 className="step">4. Map groups to roles</h3>
+      <p className="muted small">
+        Now click <strong>Manage Mappings</strong>. <code>{status.memberGroup}</code> and <code>{status.ownerGroup}</code> arrive pre-mapped and locked to Member and Owner
+        (Vercel&apos;s reserved names). Map <code>{status.workshopGroup}</code> to <strong>Member</strong> or an Access Group. Attendees then sign in at{' '}
+        <code>{status.signInUrl}</code>{copyButton(status.signInUrl, 'signin')} about a minute after they register.
       </p>
       <div className="callout">
         <p>
