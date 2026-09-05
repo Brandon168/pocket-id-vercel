@@ -159,7 +159,7 @@ The dashboard's Members → Pending Invitations tab does not list directory-crea
 | Re-Authenticate fails or signs you in as someone else | The email your IdP asserts must equal the Owner's Vercel login email. **Pocket ID:** set *Your account as Owner* in the console to your Vercel email and repeat. |
 | `vercel` CLI or API returns 403 for the team after enforcing | Expected. Personal tokens are invalidated by enforcement; re-authenticate via SAML or create a token from a SAML session. |
 | User reaches Vercel but is asked to "Connect Account" or sign up | EMU is not enabled, or the user's email is not on a verified domain. |
-| User's first SSO sign-in ends on `failed_to_provision_enterprise_user` | Observed on 2026-09-05 with a correctly configured team: Vercel created the managed account but did not join it to the team. Contact Vercel support with the team id, the user's email, and the timestamp. Do not let users take the personal-login buttons on that page. |
+| User's first SSO sign-in ends on `failed_to_provision_enterprise_user` | Vercel created the managed account but the team refused the join (a member-domain restriction, seat limit, or role rule). The login page hides the specific reason; Vercel support can read it. Do not let users take the personal-login buttons on that page. |
 | Attendee provisioned as Viewer | Role mapping missing. `vercel-role-member` covers this by default; map other groups explicitly. |
 | Invitation missing from Members → Pending Invitations | Directory-created invitations only appear in the API today. |
 | Provider picker shows "Continue setup" drafts | Stale drafts from earlier attempts; choosing your provider resets them. |

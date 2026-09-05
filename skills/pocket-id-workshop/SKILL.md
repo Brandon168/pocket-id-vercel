@@ -125,7 +125,7 @@ Or by hand: `vercel integration resource remove <project>-db --disconnect-all --
 | Passkeys stop working | Hostname changed (rename, custom domain, deployment URL). Not recoverable; redeploy. |
 | Attendee provisioned as viewer | Directory Sync role mapping missing; map `workshop` → Member. `vercel-role-member` covers this by default. |
 | Attendee reaches Vercel but is asked to "Connect Account" / sign up | EMU is not enabled on the team (needs enforced SAML + Directory Sync + verified domain). |
-| Attendee SSO ends on `failed_to_provision_enterprise_user` | Vercel-side provisioning defect observed 2026-09-05 on a correctly configured EMU team; the managed account is created but not joined to the team. Report to Vercel with team id, user id, timestamp; do not let attendees use the personal-login buttons on that page. |
+| Attendee SSO ends on `failed_to_provision_enterprise_user` | Vercel created the managed account but the team refused the join (member-domain restriction, seat limit, or role rule); the page hides the reason. Check the team's member restrictions first; otherwise ask Vercel support with team id and timestamp. Do not let attendees use the personal-login buttons on that page. |
 | Personal token / CLI gets 403 for the team | SAML enforcement invalidates existing tokens for that team. Re-authenticate via SAML or create a new token from a SAML session. |
 | Attendee shows as "Pending invitation" in the team | Expected until they complete SSO sign-in; Vercel applies SCIM pushes within about a minute. |
 | Vercel's provider picker shows "Continue setup" drafts | Stale drafts from earlier attempts; choosing Custom OIDC / Custom SCIM resets them, which is fine. |
