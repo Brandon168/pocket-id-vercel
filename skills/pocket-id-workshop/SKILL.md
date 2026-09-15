@@ -9,12 +9,15 @@ metadata:
 
 # Pocket ID workshop identity provider
 
-One deployment per workshop. Attendees scan a QR code, pick a username, create a passkey, done. Runs upstream Pocket ID inside a Vercel Sandbox behind a small Next.js controller with an instructor console at `/workshop`. Deleted after the event.
+Scope: this skill and `docs/vercel-team-setup.md` cover Pocket ID only. Keep customer-specific Entra or other IdP guides separate; do not adapt these Custom OIDC screenshots into a named-provider SAML walkthrough. The September 5 rehearsal verified configuration but did not establish a successful attendee landing on a non-test Enterprise team. Require a real attendee dry run before an event; do not describe this as an already-proven end-to-end workshop outcome.
 
-Two modes, chosen once at first run:
+One deployment per workshop. Attendees open a short `/join` link on their workshop laptop, pick a username, and create a passkey. QR is optional. Runs upstream Pocket ID inside a Vercel Sandbox behind a small Next.js controller with an instructor console at `/workshop`. Pocket ID admin is the separate upstream UI for users and clients. Deleted after the event.
+
+Three modes, chosen at first run and locked after preparation:
 
 | Mode | Attendees sign in to | What you get |
 |---|---|---|
+| **Passport** | Deployed workshop apps, including published v0 apps | Confidential `workshop-passport` with a stored secret, exact callback `https://connect.vercel.com/callback`; an Enterprise team Owner connects Vercel Passport |
 | **App** | An app the room is building | OIDC client `workshop-app` (public, PKCE) accepting any `https://*.vercel.app/api/auth/callback/pocket-id` |
 | **Vercel team** | A Vercel Enterprise team (and v0) via SSO + Directory Sync + Enterprise Managed Users | Confidential client `vercel-sso` with a stored secret, SCIM push, every attendee registered as `username@<verified domain>` |
 
@@ -22,7 +25,7 @@ Before doing anything, ask (or infer) three things: **which mode**, **which Verc
 
 ### Choosing the email domain (team mode)
 
-Enterprise Managed Users requires a domain verified on the participant team with one TXT record. Do not let the user buy a domain or try a `*.vercel.app` host (Vercel's zone cannot be verified). Instead:
+Enterprise Managed Users requires a domain controlled by the organizer, verified on the participant team with a TXT record. Buying a domain through Vercel is supported; an existing domain also works. A `*.vercel.app` host cannot be verified. To find existing domains:
 
 ```bash
 vercel domains ls --scope <participant-team>     # domains the team already owns
@@ -59,9 +62,9 @@ Verify: `curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' https://<proje
 
 Tell the user to open `https://<project>.vercel.app/setup` **immediately**: the first visitor owns the workshop. Walk them through the single screen:
 
-1. Mode card: "An app you are building" or "A Vercel Enterprise team".
+1. Mode card: "Deployed apps with Vercel Passport" for app protection, "An app with its own OIDC integration" for auth-library workshops, or "A Vercel Enterprise team" for team accounts.
 2. Team mode only: the verified email domain (e.g. `workshop-2026.example.com`). Attendees are always registered as `username@thatdomain`, whatever they type.
-3. Room size (50–1,000). Capacity is size × 1.2 in 100-use signup tokens behind one stable `/join` URL.
+3. Room size (50–1,000). Capacity is size × 1.2 rounded up to 100-use signup tokens behind one stable `/join` URL. 100 attendees creates 2 tokens; 1,000 creates 12, adding ten serial API calls and ten default one-second pauses. Attendee accounts are created at signup. This is separate from Vercel billing seats; Flex does not require preset seat quantities. Check the actual trial/plan and entitlements rather than assuming every Enterprise trial is Flex.
 4. Click **Set up this workshop**. An instructor password appears once (have them save it; their browser is already signed in via cookie). The workshop prepares itself in the background; "Workshop ready" appears in roughly 15–60 seconds. Then **Open instructor console**.
 
 If the user cannot use a browser right now, the same can be done with curl (the response sets the instructor cookie):
@@ -74,6 +77,17 @@ curl -s -b jar.txt -X POST https://<project>.vercel.app/api/workshop/setup   # b
 ```
 
 Keep `adminSecret` from the first response: it is the instructor password and the Basic-auth secret for every `/api/workshop/*` call (`curl -u ":<password>" …`).
+
+## Step 3 (Passport mode): connect deployed apps
+
+Use Passport for app protection; it does not provision Vercel or v0 accounts. The instructor console at `/workshop` prepares a separate confidential `workshop-passport` client restricted to the workshop group and shows its saved secret. `GET /api/workshop/passport` requires instructor authentication, uses `no-store`, and does not wake an idle Sandbox.
+
+1. A Vercel Enterprise team Owner creates an **OAuth Connect application → Your own credentials** from Passport settings. Use the issuer as **Server URL**, select **Discover**, and enter the console's client ID and secret. Request `openid`; add `profile` and `email` if needed.
+2. The client callback is exactly `https://connect.vercel.com/callback`.
+3. Enable Passport on the workshop app projects and select the Connect application. Team defaults apply to new projects; explicitly assign existing projects. Keep the Pocket ID issuer public and outside the Passport protection it supplies.
+4. Dry run: open `/join` on an attendee laptop → register/passkey → visit a protected deployment → confirm actual sign-in and verified app identity.
+
+Published v0 apps and the v0 editor sandbox are different environments. Real Pocket ID identity in the editor sandbox remains unverified. A local development identity fixture is not evidence of real IdP login. Consult [Passport setup](https://vercel.com/docs/passport/set-up-identity-provider) and [identity validation](https://vercel.com/docs/passport/read-identity).
 
 ## Step 3 (team mode): connect the Vercel team
 
@@ -96,11 +110,11 @@ curl -s -u ":<password>" https://<project>.vercel.app/api/workshop/vercel
    ```bash
    curl -s -u ":<password>" -X PATCH -H 'content-type: application/json' -d '{"teamSlug":"<slug>"}' https://<project>.vercel.app/api/workshop/vercel
    ```
-5. Dry run with one throwaway attendee before the event: scan → username + passkey → wait a minute → sign in at `https://vercel.com/login?saml=<slug>` → confirm Member role.
+5. Dry run with one throwaway attendee before the event: open `/join` on a laptop → username + passkey → wait a minute → sign in at `https://vercel.com/login?saml=<slug>` → confirm Member role. EMU enrollment is generally available; no separate availability flag check is needed. Verify the actual Enterprise team allows these attendees; do not assume a restricted `vtest` team is suitable.
 
 ## Step 4: run the day
 
-- QR code (public SVG): `https://<project>.vercel.app/api/workshop/qr?url=https%3A%2F%2F<project>.vercel.app%2Fjoin&download=1`. Slide copy: *username = firstname-lastname; email can be left blank; create a passkey when asked.*
+- Lead the slide with `https://<project>.vercel.app/join` and ask attendees to open it on their workshop laptop. Optional QR (public SVG): `https://<project>.vercel.app/api/workshop/qr?url=https%3A%2F%2F<project>.vercel.app%2Fjoin&download=1`. Slide copy: *username = firstname-lastname; create a passkey when asked.* Email is optional unless the workshop requires it.
 - Signup count without waking Pocket ID: `GET /api/workshop/signups`.
 - Attendee list: `GET /api/workshop/attendees?search=<term>&page=1` (add `&wake=1` if Pocket ID is idle). Each row shows `hasPasskey`.
 - Attendee locked out or skipped passkey: `POST /api/workshop/login-link {"userId":"…"}` → one-time 12-character code and link, valid one hour, no email.
@@ -110,11 +124,13 @@ curl -s -u ":<password>" https://<project>.vercel.app/api/workshop/vercel
 
 ## Step 5: tear down
 
+While the IdP still works, remove Passport assignments and any team default that uses this provider. In team mode, disable SSO enforcement, remove Directory Sync and SSO, and retire managed accounts/domain associations through the approved team process. Then delete the IdP resources below; never strand protected apps or an enforced team by deleting the IdP first.
+
 ```bash
 ./teardown.sh <project> --scope <team> --yes     # removes the Neon resource, then the project
 ```
 
-Or by hand: `vercel integration resource remove <project>-db --disconnect-all --yes`, then `vercel project remove <project>`. Team mode: also remove SSO and Directory Sync from the Vercel team, or its managed users remain. Once the IdP is gone, no attendee account can sign in again.
+Or by hand: `vercel integration resource remove <project>-db --disconnect-all --yes`, then `vercel project remove <project>`. Once the IdP is gone, no attendee account can sign in again.
 
 ## Troubleshooting
 

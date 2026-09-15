@@ -86,6 +86,9 @@ code { font-family: var(--font-mono), monospace; }
 .mode-choice { position: relative; display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: #fff; cursor: pointer; }
 .mode-choice input { position: absolute; opacity: 0; pointer-events: none; }
 .mode-choice.selected { border-color: #000; box-shadow: inset 0 0 0 1px #000; }
+.mode-choice:focus-within, .choice:focus-within { outline: 2px solid var(--blue); outline-offset: 3px; }
+.join-panel { display: grid; gap: 16px; }
+.join-panel .url-box code { white-space: normal; overflow-wrap: anywhere; font-size: 16px; }
 .mode-title { font-size: 14px; font-weight: 500; }
 .mode-detail { font-size: 13px; line-height: 1.5; color: var(--muted); }
 .field { display: grid; gap: 6px; }

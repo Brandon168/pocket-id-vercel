@@ -5,12 +5,14 @@ import {
   acquireAutoSyncSlot,
   acquirePrepareLease,
   defaultWorkshopOptions,
+  getPassportConnection,
   getVercelConnection,
   getWorkshopOptions,
   getWorkshopSetup,
   recordSyncAttempt,
   releasePrepareLease,
   saveVercelConnection,
+  savePassportConnection,
   saveWorkshopSetup,
   updateAdminLoginUrl,
   type VercelConnection,
@@ -41,6 +43,8 @@ export const vercelMemberGroupName = 'vercel-role-member';
 // cannot demote or remove the person who confirmed it.
 export const vercelOwnerGroupName = 'vercel-role-owner';
 export const workshopGroupName = 'workshop';
+export const passportClientId = 'workshop-passport';
+export const passportCallbackUrl = 'https://connect.vercel.com/callback';
 
 export function signupTokenCount(expectedAttendees: number): number {
   return Math.max(1, Math.ceil((expectedAttendees * headroom) / tokenUsageLimit));
@@ -50,7 +54,7 @@ export function estimateSetupSeconds(expectedAttendees: number, mode: WorkshopMo
   // Fixed mutations plus one per token, each followed by a pause, plus the
   // API round trips themselves. Vercel team mode adds the role group, the
   // confidential client, and its secret.
-  const fixed = mode === 'vercel-team' ? 11 : 8;
+  const fixed = mode === 'vercel-team' ? 11 : mode === 'passport' ? 9 : 8;
   const mutations = fixed + signupTokenCount(expectedAttendees);
   return Math.ceil((mutations * (mutationDelayMs + 400)) / 1000);
 }
@@ -77,8 +81,15 @@ async function pocketApi<T>(origin: string, path: string, init?: RequestInit): P
     },
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`Pocket ID ${path} returned ${response.status}: ${text.slice(0, 500)}`);
+  if (!response.ok) throw new PocketApiError(path, response.status);
   return text ? JSON.parse(text) as T : undefined as T;
+}
+
+class PocketApiError extends Error {
+  constructor(path: string, readonly status: number) {
+    // Upstream bodies can contain credentials; keep errors safe for logs/UI.
+    super(`Pocket ID ${path} returned ${status}`);
+  }
 }
 
 async function pause(): Promise<void> {
@@ -162,8 +173,9 @@ async function clientExists(origin: string, clientId: string): Promise<boolean> 
   try {
     const client = await pocketApi<{ id: string }>(origin, `/oidc/clients/${clientId}`);
     return client.id === clientId;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof PocketApiError && error.status === 404) return false;
+    throw error;
   }
 }
 
@@ -269,6 +281,37 @@ async function ensureAppClient(origin: string, groupId: string): Promise<void> {
 }
 
 type ClientSecretCreated = { id: string; secret: string };
+
+async function ensurePassportClient(origin: string, groupId: string): Promise<void> {
+  const existing = await getPassportConnection(workshopName);
+  const exists = await clientExists(origin, passportClientId);
+  if (!exists && existing) {
+    throw new Error('The prepared Passport client is missing in Pocket ID. Restore it before connecting Vercel.');
+  }
+  if (!exists) {
+    await pocketApi(origin, '/oidc/clients', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: passportClientId,
+        name: 'Workshop Passport',
+        callbackURLs: [passportCallbackUrl],
+        logoutCallbackURLs: [],
+        isPublic: false,
+        pkceEnabled: true,
+        skipConsent: true,
+        isGroupRestricted: true,
+      }),
+    });
+    await pause();
+  }
+  await restrictClientToGroups(origin, passportClientId, [groupId]);
+  if (existing) return;
+  const created = await pocketApi<ClientSecretCreated>(origin, `/oidc/clients/${passportClientId}/secrets`, { method: 'POST' });
+  // Persist immediately so a later failed setup step can retry without
+  // replacing credentials an instructor may already have copied to Vercel.
+  await savePassportConnection(workshopName, { clientId: passportClientId, clientSecret: created.secret });
+  await pause();
+}
 
 // Attendees sign in to Vercel at this URL; with a team slug it also becomes
 // the client's launch URL, so Pocket ID shows a "Vercel" tile after signup.
@@ -442,6 +485,8 @@ async function provisionWorkshop(requestOrigin: string): Promise<WorkshopSetup> 
     await addAdminToGroup(origin, ownerGroup.id, admin.id);
     await setInstructorEmail(origin, admin, options.ownerEmail ?? defaultInstructorEmail(options.emailDomain ?? ''));
     await ensureVercelSsoClient(origin, [...attendeeGroupIds, ownerGroup.id]);
+  } else if (options.mode === 'passport') {
+    await ensurePassportClient(origin, group.id);
   } else {
     await ensureAppClient(origin, group.id);
   }
@@ -652,7 +697,8 @@ export async function repairConfigurationOnce(): Promise<void> {
   try {
     const origin = await getKnownSandboxOrigin();
     const groupIds = await attendeeGroupIds(origin, options.mode);
-    await restrictClientToGroups(origin, options.mode === 'vercel-team' ? vercelSsoClientId : 'workshop-app', groupIds);
+    const clientId = options.mode === 'vercel-team' ? vercelSsoClientId : options.mode === 'passport' ? passportClientId : 'workshop-app';
+    await restrictClientToGroups(origin, clientId, groupIds);
   } catch (error) {
     repaired.delete(workshopName);
     console.error('Configuration repair failed', error);
@@ -688,6 +734,25 @@ export type VercelTeamStatus = {
 
 // Thrown for bad instructor input; routes answer 400 instead of 500.
 export class InvalidInputError extends Error {}
+
+export type PassportStatus = {
+  issuer: string;
+  discoveryUrl: string;
+  clientId: string;
+  clientSecret: string;
+  callbackUrl: string;
+};
+
+// Reads prepared credentials without waking Pocket ID or claiming that the
+// instructor has completed the separate Vercel Connect / Passport setup.
+export async function getPassportStatus(requestOrigin: string): Promise<PassportStatus | null> {
+  const options = await getWorkshopOptions(workshopName);
+  if (options.mode !== 'passport') throw new InvalidInputError('This workshop is not using Passport mode.');
+  const connection = await getPassportConnection(workshopName);
+  if (!connection) return null;
+  const issuer = appUrl(requestOrigin);
+  return { ...connection, issuer, discoveryUrl: `${issuer}/.well-known/openid-configuration`, callbackUrl: passportCallbackUrl };
+}
 
 // Pocket ID reports SCIM failures as a generic 500; say something useful.
 function describeSyncError(error: unknown): string {
@@ -955,7 +1020,10 @@ export class InvalidOptionsError extends Error {}
 export function parseWorkshopOptions(body: unknown): WorkshopOptions {
   const input = (body ?? {}) as Partial<Record<keyof WorkshopOptions, unknown>>;
   const attendees = Number(input.expectedAttendees);
-  const mode: WorkshopMode = input.mode === 'vercel-team' ? 'vercel-team' : 'app';
+  if (input.mode !== undefined && input.mode !== 'app' && input.mode !== 'passport' && input.mode !== 'vercel-team') {
+    throw new InvalidOptionsError('Choose an app, Passport, or Vercel team workshop.');
+  }
+  const mode: WorkshopMode = input.mode ?? 'app';
   const emailDomain = mode === 'vercel-team' ? normalizeEmailDomain(input.emailDomain) : null;
   if (mode === 'vercel-team' && !emailDomain) {
     throw new InvalidOptionsError('Enter the email domain your Vercel team has verified, for example workshop.example.com');
@@ -967,7 +1035,7 @@ export function parseWorkshopOptions(body: unknown): WorkshopOptions {
   }
   return {
     expectedAttendees: attendeeChoices.includes(attendees) ? attendees : defaultWorkshopOptions.expectedAttendees,
-    requireEmail: mode === 'app' && input.requireEmail === true,
+    requireEmail: mode !== 'vercel-team' && input.requireEmail === true,
     mode,
     emailDomain,
     ownerEmail,

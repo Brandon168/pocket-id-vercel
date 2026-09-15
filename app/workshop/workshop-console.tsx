@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { OptionsForm, type OptionsDraft, type WorkshopMode } from './options-form';
 import { VercelTeamPanel } from './vercel-team-panel';
+import { PassportPanel } from './passport-panel';
 
 type WorkshopSetup = {
   adminUsername: string;
@@ -224,9 +225,13 @@ export function WorkshopConsole() {
   }
 
   async function copy(value: string, label: string) {
-    await navigator.clipboard.writeText(value);
-    setCopied(label);
-    setTimeout(() => setCopied(''), 1_500);
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(label);
+      setTimeout(() => setCopied(''), 1_500);
+    } catch {
+      setError('Could not copy. Select the value and copy it manually.');
+    }
   }
 
   if (loading) return <div className="panel loading">Loading workshop…</div>;
@@ -237,6 +242,7 @@ export function WorkshopConsole() {
     const seconds = status?.plan.estimatedSeconds ?? 0;
     const options = status?.options;
     const vercelTeam = options?.mode === 'vercel-team';
+    const passport = options?.mode === 'passport';
     if (preparingElsewhere) {
       return (
         <div className="panel setup-panel">
@@ -283,6 +289,11 @@ export function WorkshopConsole() {
                 ({attendees.toLocaleString()} expected plus headroom). Every attendee is registered as{' '}
                 <code>username@{options?.emailDomain}</code>.
               </>
+            ) : passport ? (
+              <>
+                Prepares Pocket ID credentials for Vercel Passport and signup capacity for {capacity.toLocaleString()} attendees
+                ({attendees.toLocaleString()} expected plus headroom). An Enterprise team Owner then connects Passport in Vercel.
+              </>
             ) : (
               <>
                 Creates the instructor admin, workshop group, the <code>workshop-app</code> OIDC client, and signup capacity for{' '}
@@ -294,7 +305,7 @@ export function WorkshopConsole() {
           </p>
         </div>
         <dl>
-          <div><dt>Attendees sign in to</dt><dd>{vercelTeam ? 'A Vercel Enterprise team (SSO + Directory Sync)' : 'An app you are building'}</dd></div>
+          <div><dt>Attendees sign in to</dt><dd>{vercelTeam ? 'A Vercel Enterprise team (SSO + Directory Sync)' : passport ? 'Deployed apps with Vercel Passport' : 'An app with its own OIDC integration'}</dd></div>
           {vercelTeam && <div><dt>Email domain</dt><dd><code>{options?.emailDomain}</code></dd></div>}
           {vercelTeam && <div><dt>Stays Owner</dt><dd><code>{options?.ownerEmail ?? `instructor@${options?.emailDomain}`}</code></dd></div>}
           <div><dt>Room size</dt><dd>{attendees.toLocaleString()} expected · capacity {capacity.toLocaleString()}</dd></div>
@@ -319,6 +330,7 @@ export function WorkshopConsole() {
   }
 
   const vercelTeam = status?.options.mode === 'vercel-team';
+  const passport = status?.options.mode === 'passport';
   const qrUrl = `/api/workshop/qr?url=${encodeURIComponent(setup.joinUrl)}`;
   return (
     <div className="console-grid">
@@ -334,14 +346,18 @@ export function WorkshopConsole() {
               : `Up to ${setup.capacity.toLocaleString()}`}
           </span>
         </div>
-        <div className="qr-frame"><img src={qrUrl} alt={`QR code for ${setup.joinUrl}`} /></div>
         <div className="url-box">
           <code>{setup.joinUrl}</code>
           <button className="secondary" onClick={() => copy(setup.joinUrl, 'join')}>{copied === 'join' ? 'Copied' : 'Copy URL'}</button>
         </div>
-        <a className="download" href={`${qrUrl}&download=1`}>Download QR code</a>
+        <p className="muted small">Open this link on the laptop you will use for the workshop, then choose a username and create a passkey.</p>
+        <details className="advanced">
+          <summary>Show optional QR code</summary>
+          <div className="qr-frame"><img src={qrUrl} alt={`QR code for ${setup.joinUrl}`} /></div>
+          <a className="download" href={`${qrUrl}&download=1`}>Download QR code</a>
+        </details>
         <p className="muted small">
-          One stable URL distributes attendees across {status?.plan.tokenCount ?? 1} signup pool{(status?.plan.tokenCount ?? 1) === 1 ? '' : 's'} of 100 uses each.
+          Use the same signup link for everyone. Signup closes {new Date(setup.expiresAt).toLocaleString()}.
           {vercelTeam && <> Email is assigned automatically as <code>username@{status?.options.emailDomain}</code>; attendees can leave it blank.</>}
         </p>
       </section>
@@ -382,8 +398,9 @@ export function WorkshopConsole() {
       </section>
 
       {vercelTeam && <VercelTeamPanel copy={copy} copied={copied} />}
+      {passport && <PassportPanel copy={copy} copied={copied} />}
 
-      {!vercelTeam && (
+      {!vercelTeam && !passport && (
         <section className="panel integration-panel">
           <div>
             <p className="eyebrow">Your app</p>
@@ -397,8 +414,8 @@ export function WorkshopConsole() {
             <div><dt>Callback</dt><dd><code>https://*.vercel.app/api/auth/callback/pocket-id</code></dd></div>
           </dl>
           <p className="muted small">
-            Any Vercel deployment, including previews, can complete sign-in. Edit the client in Pocket ID admin under
-            <strong> OIDC Clients</strong> if your app uses a different callback path.
+            Preview and production deployments using this callback path can complete sign-in. The v0 editor sandbox needs separate setup.
+            Edit the client in Pocket ID admin under <strong>OIDC Clients</strong> if your app uses a different callback path.
           </p>
         </section>
       )}
@@ -415,7 +432,7 @@ export function WorkshopConsole() {
           <li><strong>No Touch ID / Windows Hello?</strong> At the passkey step they can pick &quot;use a phone&quot; and scan the QR with a personal phone.</li>
           <li><strong>Passkeys blocked entirely?</strong> <strong>Skip for now</strong> keeps them signed in for 30 days on that device.</li>
           <li><strong>Signed out, or on another device, with no passkey?</strong> Ask for their username (it is on their Settings → Account page if they are still signed in anywhere), find them below, and click <strong>Login code</strong>. Send the link or have them type the code. Works once, lasts an hour.</li>
-          <li><strong>Testing the QR yourself?</strong> A device that is already signed in to Pocket ID (yours, or an attendee re-scanning) gets a choice to continue to the account or sign out and register someone new.</li>
+          <li><strong>Testing the signup link yourself?</strong> A device that is already signed in to Pocket ID gets a choice to continue to the account or sign out and register someone new.</li>
           <li><strong>Tip for your signup slide:</strong> ask attendees to use <code>firstname-lastname</code> as their username. Name and email are optional in Pocket ID, so the username is how you will find people.</li>
           {vercelTeam && (
             <li><strong>Vercel account not showing up?</strong> Signups reach Vercel within about a minute. If someone is still missing after two, click <strong>Sync now</strong> above, then have them sign in at the sign-in link shown in the Vercel team panel.</li>

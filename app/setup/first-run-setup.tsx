@@ -127,7 +127,7 @@ export function FirstRunSetup() {
           )}
           {prepare?.state === 'done' && (
             <p>
-              <strong>Workshop ready.</strong> Attendees sign up at <code>{prepare.joinUrl}</code>. The console has the QR code.
+              <strong>Workshop signup ready.</strong> Attendees sign up at <code>{prepare.joinUrl}</code>. Open the instructor console for connection steps, the signup link, and an optional QR code.
             </p>
           )}
           {prepare?.state === 'failed' && (

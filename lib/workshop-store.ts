@@ -13,10 +13,12 @@ export type WorkshopSetup = {
 // What attendees sign in to once they have a passkey.
 //   app          — an application the room is building; Pocket ID issues a
 //                  public PKCE client (`workshop-app`).
+//   passport     — deployed apps protected by Vercel Passport; Pocket ID
+//                  issues a separate confidential client (`workshop-passport`).
 //   vercel-team  — a Vercel Enterprise team via SSO + Directory Sync
 //                  (Enterprise Managed Users); Pocket ID issues a confidential
 //                  client (`vercel-sso`) and pushes users over SCIM.
-export type WorkshopMode = 'app' | 'vercel-team';
+export type WorkshopMode = 'app' | 'passport' | 'vercel-team';
 
 export type WorkshopOptions = {
   expectedAttendees: number;
@@ -54,6 +56,12 @@ export type VercelConnection = {
   lastSyncError: string | null;
   lastSyncAttemptAt: Date | null;
   updatedAt: Date;
+};
+
+// Separate from team SSO: Passport authenticates visitors to deployed apps.
+export type PassportConnection = {
+  clientId: string;
+  clientSecret: string;
 };
 
 let sqlClient: NeonQueryFunction<false, false> | null = null;
@@ -185,7 +193,7 @@ export async function getWorkshopOptions(name: string): Promise<WorkshopOptions>
   return {
     expectedAttendees: Number(row.expected_attendees),
     requireEmail: Boolean(row.require_email),
-    mode: row.mode === 'vercel-team' ? 'vercel-team' : 'app',
+    mode: row.mode === 'vercel-team' || row.mode === 'passport' ? row.mode : 'app',
     emailDomain: row.email_domain ? String(row.email_domain) : null,
     ownerEmail: row.owner_email ? String(row.owner_email) : null,
   };
@@ -301,5 +309,30 @@ export async function saveVercelConnection(
       scim_provider_id = EXCLUDED.scim_provider_id,
       scim_endpoint = EXCLUDED.scim_endpoint,
       updated_at = now()
+  `;
+}
+
+async function initializePassportConnection(): Promise<void> {
+  await workshopSql()`
+    CREATE TABLE IF NOT EXISTS pocket_id_passport_connection (
+      name text PRIMARY KEY,
+      client_id text NOT NULL,
+      client_secret text NOT NULL
+    )
+  `;
+}
+
+export async function getPassportConnection(name: string): Promise<PassportConnection | null> {
+  await initializePassportConnection();
+  const rows = await workshopSql()`SELECT * FROM pocket_id_passport_connection WHERE name = ${name}`;
+  return rows.length ? { clientId: String(rows[0].client_id), clientSecret: String(rows[0].client_secret) } : null;
+}
+
+export async function savePassportConnection(name: string, connection: PassportConnection): Promise<void> {
+  await initializePassportConnection();
+  await workshopSql()`
+    INSERT INTO pocket_id_passport_connection (name, client_id, client_secret)
+    VALUES (${name}, ${connection.clientId}, ${connection.clientSecret})
+    ON CONFLICT (name) DO NOTHING
   `;
 }

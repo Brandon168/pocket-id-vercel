@@ -1,20 +1,20 @@
 # Pocket ID on Vercel — a workshop identity provider you delete afterwards
 
-Running a hands-on workshop loses its first 20–30 minutes to accounts: signups, verification codes, invite emails, "are you in the team yet?". This template gives every attendee an identity from a **passkey alone** — one QR code, no email, no password — and then goes away when the event does.
+Running a hands-on workshop loses its first 20–30 minutes to accounts: signups, verification codes, invite emails, "are you in the team yet?". This template gives every attendee an identity from a **passkey alone** — one signup link, no password — and then goes away when the event does.
 
-It runs upstream [Pocket ID](https://github.com/pocket-id/pocket-id) unmodified inside one Vercel Sandbox, fronted by a small Next.js controller. Deploy it, click **Prepare workshop**, put the QR code on a slide.
+It runs upstream [Pocket ID](https://github.com/pocket-id/pocket-id) unmodified inside one Vercel Sandbox, fronted by a small Next.js controller. Deploy it, prepare the workshop, and put the short `/join` link on a slide. Attendees open it on their workshop laptop; a QR code is optional.
 
 ## Which mode do you need?
 
 Pick this on the first-run screen. You can change it from the console until you click **Prepare workshop**.
 
-| | **App mode** | **Vercel team mode** |
-|---|---|---|
-| Attendees sign in to… | An app the room is building | A Vercel Enterprise team (and v0) |
-| What Pocket ID becomes | The OIDC login provider for that app | The identity provider behind the team's SSO + Directory Sync (Enterprise Managed Users) |
-| What you get after Prepare | A public PKCE client `workshop-app` accepting any `https://*.vercel.app/...` callback | A confidential client `vercel-sso` with a secret, plus a SCIM push into the team |
-| Attendee email | Optional (or required, your choice) | Assigned automatically as `username@<your verified domain>` |
-| Vercel side | Nothing | An Enterprise team with a verified domain, SSO, Directory Sync, and Enterprise Managed Users enabled |
+| Mode | Attendees sign in to | Prepared client | Vercel requirements |
+|---|---|---|---|
+| **Passport** | Deployed workshop apps | Confidential `workshop-passport`, callback `https://connect.vercel.com/callback` | Enterprise team Owner connects Passport and assigns projects |
+| **App / direct OIDC** | An app with its own auth integration | Public PKCE `workshop-app`, callback `https://*.vercel.app/api/auth/callback/pocket-id` | App implements OIDC; adjust callback if needed |
+| **Vercel team** | A Vercel Enterprise team (and v0) | Confidential `vercel-sso`, then SCIM connection | Verified domain, enforced SSO, Directory Sync and Enterprise Managed Users |
+
+Use **Passport mode** to protect workshop apps with Pocket ID, including published v0 apps. It does not create Vercel or v0 accounts. Real IdP sign-in in the v0 editor sandbox remains unverified; a development identity fixture is not proof of it.
 
 Use **App mode** for "add login to your Next.js app" style sessions, auth-library workshops, or any demo that needs a throwaway OIDC provider with wildcard redirect URIs.
 
@@ -28,7 +28,7 @@ Use **Vercel team mode** when attendees need Vercel accounts to deploy, use v0, 
 2. **The moment it says Ready, open `https://<project>.vercel.app`.** Use the short production domain, not the longer `<project>-xxxx-<team>.vercel.app` deployment URL. Every path redirects to a one-time `/setup` screen. Until someone completes it, the first visitor owns the workshop, so do this right away.
 3. **On `/setup`, pick the mode, room size, and (Vercel team mode) the verified email domain, then click once.** It generates the workshop's secrets, shows you an instructor password one time, and immediately starts preparing the workshop in the background: Pocket ID boots (about a minute), then the instructor admin, groups, OIDC client, and signup capacity are created.
 4. **Copy the password and open the console.** Your browser is already signed in as the instructor; the password is only for other devices, where the browser's sign-in prompt accepts it with an empty username.
-5. **Put the QR code on your slide.** Attendees scan, choose a username, create a passkey, done.
+5. **Finish the mode's connection steps in the instructor console at `/workshop`.** Then put the short signup link on your slide. Attendees open it on their laptop, choose a username, and create a passkey. Show the optional QR code if useful.
 
 Two clicks after the deploy finishes. The console can also change options and re-run Prepare if something interrupted it; every step is safe to repeat.
 
@@ -62,7 +62,7 @@ The controller uses `https://<project>.vercel.app` as Pocket ID's `APP_URL`, OID
 
 ## Vercel team mode: connecting the team
 
-After **Prepare workshop**, the console shows a **Vercel team** panel with four numbered steps. Everything you need to paste is there, with copy buttons. For the screen-by-screen version with screenshots of every Vercel dialog, an Entra ID cheat sheet, and troubleshooting, see [docs/vercel-team-setup.md](docs/vercel-team-setup.md).
+After **Prepare workshop**, the console shows a **Vercel team** panel with four numbered steps. Everything you need to paste is there, with copy buttons. For the Pocket ID-specific setup guide, selected rehearsal screenshots, validation limits, and troubleshooting, see [docs/vercel-team-setup.md](docs/vercel-team-setup.md).
 
 **On the Vercel team** (you must be an Owner): Settings → Security & Privacy → Authentication and User Provisioning. Vercel enforces this order; the console's Vercel team panel shows the same four steps with copy buttons.
 
@@ -73,9 +73,20 @@ After **Prepare workshop**, the console shows a **Vercel team** panel with four 
 
 Set the **team slug** in the console: Pocket ID then shows attendees a **Vercel** tile that opens `https://vercel.com/login?saml=<slug>`, and the console shows the same link for your slide.
 
-**Choosing the domain.** EMU needs a domain verified on the team with one TXT record. Pick a dedicated subdomain of a domain your team already owns (`vercel domains ls --scope <team>` lists them; `deploy.sh` prints them too), for example `workshop.yourcompany.com`, one per event: a subdomain can only be claimed by one team at a time, it never has to point anywhere, and no email is ever sent. `*.vercel.app` project domains cannot be verified. The email domain you entered at `/setup` must be verified on the team. Every attendee is registered as `username@<that domain>` regardless of what they type in the email field, so attendees cannot use the wrong domain and no email is ever sent.
+**Choosing the domain.** EMU needs a domain you control, verified on the team with a TXT record. You can buy one through Vercel or use an existing domain (`vercel domains ls --scope <team>` lists them). A dedicated event subdomain such as `workshop.yourcompany.com` makes cleanup easier. No website or mailbox is needed; `*.vercel.app` cannot be verified. The domain entered at `/setup` must match the verified domain. Attendee addresses use that domain and nothing is emailed.
 
-**Attendee flow:** scan the QR → username + passkey → within about a minute they can sign in at `vercel.com/login?saml=<slug>`. They are in the team, and in v0 if the team has it.
+**Attendee flow:** open `/join` on a laptop → username + passkey → allow Directory Sync to finish → sign in at `vercel.com/login?saml=<slug>`. Verify team membership and v0 access in a dry run before the event.
+
+## Passport mode: protecting deployed apps
+
+The **instructor console** is this template's `/workshop` page. Its Passport panel shows a separate confidential client and a stored secret. The **Pocket ID admin** UI manages upstream users and clients; it is not the instructor console.
+
+1. Prepare a Passport workshop. The client accepts only `https://connect.vercel.com/callback` and is restricted to the workshop group.
+2. As a Vercel Enterprise team Owner, open Passport settings and create an **OAuth Connect application → Your own credentials**. Paste the issuer into **Server URL**, select **Discover**, and enter the console's client ID and secret. Request `openid`; add `profile` and `email` if needed.
+3. Enable Passport for each app project and select this Connect application. A team default covers **new** projects; existing projects need assignment. Keep the Pocket ID issuer project publicly reachable, outside the Passport protection it supplies.
+4. Register a throwaway attendee using `/join`, create a passkey, then visit a protected app in a separate browser session. Confirm sign-in and the verified identity received by the app. Published v0 deployments and the v0 editor sandbox are different environments; test real sign-in separately.
+
+Preparation creates the Pocket ID credentials only. It does not configure Vercel or verify that Passport is working. See [Passport setup](https://vercel.com/docs/passport/set-up-identity-provider) and [reading identity](https://vercel.com/docs/passport/read-identity).
 
 ## App mode: pointing your app at Pocket ID
 
@@ -88,7 +99,7 @@ After **Prepare workshop**, the console shows the issuer, discovery URL, and cli
 | Client type | Public, PKCE required, no secret |
 | Callback | `https://*.vercel.app/api/auth/callback/pocket-id` |
 
-The wildcard means every attendee's preview and production deployments can complete sign-in without registering URLs. Edit the client in Pocket ID admin (**OIDC Clients**) if your app uses a different callback path or needs a confidential client.
+The wildcard covers preview and production deployments using that exact callback path. It does not cover the v0 editor sandbox. Edit the client in Pocket ID admin (**OIDC Clients**) if your app uses a different callback path or needs a confidential client.
 
 ## What `/setup` generates
 
@@ -98,6 +109,7 @@ The wildcard means every attendee's preview and production deployments can compl
 | Pocket ID API key | Server-side provisioning from the console | Behind a disclosure on `/setup`; only needed for `setup.sh` |
 | Instructor password | Console access from other devices (Basic auth); stored as a hash. The deploying browser gets a session cookie instead. | Shown once on `/setup` |
 | `vercel-sso` client secret (team mode) | Pasted into Vercel's SSO dialog | Shown in the console behind **Show**; rotate from there |
+| `workshop-passport` client secret (Passport mode) | Pasted into the Vercel Connect application | Available only through the instructor-authenticated console/API; hidden behind **Show** |
 
 All of these live in the workshop's Neon database next to the data they protect. For a workshop that exists for a few days and is then deleted, that is the intended trade for a zero-input deploy. The `/setup` claim is atomic, so exactly one visitor can complete it; afterwards `/setup` redirects to `/workshop` permanently. If `/setup` says someone else already completed it, delete the project and the Neon resource and deploy again.
 
@@ -108,6 +120,8 @@ Lost the password? Set `WORKSHOP_ADMIN_SECRET` on the Vercel project and redeplo
 Pocket ID always requires a username and treats first and last name as optional. Because the username is the only guaranteed identifier, tell attendees on the signup slide to use `firstname-lastname`; that is how you will find them in the console if they need help, and in Vercel team mode it becomes their email's local part. After registering a passkey, attendees land on Pocket ID's `/settings/account` page (hard-coded in Pocket ID's frontend).
 
 Signup capacity is `expected attendees × 1.2`, rounded up to whole 100-use signup tokens (Pocket ID's per-token cap). `/join` rotates attendees across them. Tokens expire after 72 hours. The console shows live signup counts while Pocket ID is running.
+
+This prepares signup tokens, not attendee accounts or Vercel billing seats. Choosing 100 attendees creates 2 tokens (capacity 200); choosing 1,000 creates 12 (capacity 1,200). The extra ten API calls each have a default one-second pause, adding roughly ten seconds plus request time. Accounts are created at signup. Flex does not need preset seat quantities, but team plan, entitlement and commitment checks remain separate; do not assume every Enterprise trial uses Flex.
 
 ### Attendees who cannot use a passkey
 
@@ -120,7 +134,7 @@ For most workshops this means never opening the Pocket ID admin UI. It remains o
 
 ## Teardown
 
-Delete both the Vercel project (which removes the Sandbox and snapshots) and the Neon Marketplace resource (which holds attendee identities and controller state). Marketplace resources survive project deletion; `teardown.sh` removes both. In Vercel team mode, also remove the SSO and Directory Sync configuration from the team, or its managed users will remain.
+While Pocket ID still works, remove the workshop's Passport assignments and any team default, or disable team SSO enforcement and remove Directory Sync/SSO as applicable. Retire managed accounts and the participant team through the approved process. Then delete the IdP project and Neon resource with `teardown.sh`. Marketplace resources survive project deletion; deleting the IdP first can strand protected apps or an enforced team.
 
 ## How it works
 
@@ -133,7 +147,7 @@ Pocket ID embeds a single-host actor system, so exactly one process may run per 
 - **Scale to zero.** A one-minute cron stops and snapshots the Sandbox after `SANDBOX_IDLE_MINUTES` (default 120) without traffic. The next request resumes it inside the same HTTP call. Graceful stop clears the stale actor-host row so restart is never blocked.
 - **Shared database.** One Neon project holds Pocket ID's tables and the controller's lifecycle, workshop, secrets, and Vercel-connection tables. Set `CONTROLLER_DATABASE_URL` to split them.
 
-> The controller and lifecycle were load-tested in an earlier iteration. Vercel team mode was verified against a real Enterprise team on 2026-09-05 up to and including SSO sign-in, SCIM push, and role mapping; the EMU step itself needs a verified domain and was documented from Vercel's dialogs. Run your chosen mode end to end before relying on it for an event.
+> The September 5 rehearsal verified SSO, SCIM, domain/EMU configuration and mappings, but did not establish a successful attendee team join: the rehearsal team rejected that step. Passport preparation is separate from a real Vercel connection. Run your chosen mode end to end on the intended team and deployment before an event.
 
 ## Environment variables
 
@@ -159,6 +173,14 @@ curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
 ```
 
 A stopped Sandbox costs only snapshot storage. `setup.sh` remains for custom headcounts, durations, or client settings and needs the API key from `/setup`.
+
+## Local verification
+
+`npm test` exercises all three provisioning modes, database persistence in disposable PGlite, retry behavior and instructor-only credential access. It does not use `.env.local` or call Vercel.
+
+For an actual Pocket ID API and OIDC check, download the platform binary for **v2.14.0**, verify its release checksum, and run `POCKET_ID_TEST_BINARY=/absolute/path/to/pocket-id npm test`. This starts the binary on localhost ports 14119/14120 with fresh SQLite data and removes that data afterwards. It verifies signup, group restrictions, client-secret authentication and the signature/claims of a real OIDC token. It does not test a passkey ceremony, Vercel Passport or the v0 editor.
+
+Run `npm run typecheck` and `npm run build`. Then install the test browser with `npx playwright install chromium` and run `npm run test:browser`. Browser tests use the built Next.js app on port 3098 with dummy credentials, an unreachable database and intercepted workshop API responses. They check mode selection, error/retry, secret visibility/copy, and link-first signup on desktop/mobile. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium binary.
 
 ## Files
 

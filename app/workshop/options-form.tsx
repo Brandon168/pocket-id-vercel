@@ -1,6 +1,7 @@
 'use client';
 
-export type WorkshopMode = 'app' | 'vercel-team';
+import type { WorkshopMode } from '@/lib/workshop-store';
+export type { WorkshopMode } from '@/lib/workshop-store';
 
 export type OptionsDraft = {
   expectedAttendees: number;
@@ -31,10 +32,15 @@ export function OptionsForm({ value, onChange, disabled }: {
       <fieldset className="choice-group">
         <legend>What are attendees signing in to?</legend>
         <div className="mode-choices">
+          <label className={`mode-choice${value.mode === 'passport' ? ' selected' : ''}`}>
+            <input type="radio" name="mode" value="passport" checked={value.mode === 'passport'} disabled={disabled} onChange={() => set({ mode: 'passport' })} />
+            <span className="mode-title">Deployed apps with Vercel Passport</span>
+            <span className="mode-detail">Recommended for protecting workshop apps. Attendees sign in with Pocket ID; a Vercel Enterprise team Owner connects Passport. This does not create Vercel or v0 accounts.</span>
+          </label>
           <label className={`mode-choice${value.mode === 'app' ? ' selected' : ''}`}>
             <input type="radio" name="mode" value="app" checked={value.mode === 'app'} disabled={disabled} onChange={() => set({ mode: 'app' })} />
-            <span className="mode-title">An app you are building</span>
-            <span className="mode-detail">Pocket ID becomes the login provider for the room&apos;s project. Creates a public PKCE client that accepts any <code>*.vercel.app</code> callback.</span>
+            <span className="mode-title">An app with its own OIDC integration</span>
+            <span className="mode-detail">For teaching app-level authentication with Auth.js or similar. Uses a public PKCE client and the <code>/api/auth/callback/pocket-id</code> path on deployed <code>*.vercel.app</code> apps. The v0 editor sandbox needs separate setup.</span>
           </label>
           <label className={`mode-choice${value.mode === 'vercel-team' ? ' selected' : ''}`}>
             <input type="radio" name="mode" value="vercel-team" checked={value.mode === 'vercel-team'} disabled={disabled} onChange={() => set({ mode: 'vercel-team' })} />
@@ -61,7 +67,7 @@ export function OptionsForm({ value, onChange, disabled }: {
             disabled={disabled}
             onChange={(event) => set({ emailDomain: event.target.value })}
           />
-          <span className="muted small">Use a dedicated subdomain of a domain your team already owns, for example <code>workshop.yourcompany.com</code>; you verify it later with one TXT record and it never has to point anywhere. Every attendee is registered as <code>username@{value.emailDomain || 'domain'}</code>, whatever they type; nothing is ever emailed. <code>*.vercel.app</code> hosts cannot be verified.</span>
+          <span className="muted small">Use a domain you control, including one purchased through Vercel. A dedicated event subdomain such as <code>workshop.yourcompany.com</code> works too. Verify it later with a TXT record; no website or mailbox is needed. Attendee addresses use <code>@{value.emailDomain || 'domain'}</code>; nothing is emailed. <code>*.vercel.app</code> hosts cannot be verified.</span>
         </label>
       )}
 
@@ -100,10 +106,10 @@ export function OptionsForm({ value, onChange, disabled }: {
             </label>
           ))}
         </div>
-        <p className="muted small">Sets signup capacity with 20% headroom. Larger rooms take a little longer to prepare.</p>
+        <p className="muted small">Reserves signup capacity with at least 20% headroom, rounded up in batches of 100. Larger rooms need more signup tokens, so setup takes longer. Accounts are created when attendees sign up; this does not set Vercel billing seats.</p>
       </fieldset>
 
-      {value.mode === 'app' && (
+      {value.mode !== 'vercel-team' && (
         <>
           <label className="acknowledge">
             <input type="checkbox" checked={value.requireEmail} disabled={disabled} onChange={(event) => set({ requireEmail: event.target.checked })} />

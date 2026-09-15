@@ -3,8 +3,8 @@
 #
 # Same result as the Deploy Button, without cloning a GitHub repo into your
 # account: creates the Vercel project, attaches a Neon database (or uses one
-# you bring), deploys, and opens /setup. Two clicks after that and the QR code
-# is ready.
+# you bring), deploys, and opens /setup. The instructor console guides the
+# connection and provides a short signup link plus an optional QR code.
 #
 # Usage:
 #   ./deploy.sh --scope <team-slug> [--project <name>] [options]
@@ -175,7 +175,8 @@ DOMAINS="$(vercel domains ls --scope "$SCOPE" 2>&1 | awk '/^  [A-Za-z0-9]/ && $1
 if [[ -n "$DOMAINS" ]]; then
   step "Domains this team already owns"
   note "If attendees will get Vercel accounts (Vercel team mode), use a dedicated subdomain of one of these"
-  note "as the email domain at /setup, e.g. workshop.<domain>. You verify it later with one TXT record."
+  note "as the email domain at /setup, e.g. workshop.<domain>. You can also buy a domain through Vercel."
+  note "Verify your chosen domain later with one TXT record."
   while IFS= read -r d; do note "  $d"; done <<< "$DOMAINS"
 fi
 
@@ -184,9 +185,10 @@ cat <<EOF
 
     $URL/setup
 
-The first visitor owns the workshop. On /setup: pick what attendees sign in to (an app you are
-building, or a Vercel Enterprise team), the room size, then one click. Your instructor password
-is shown once; the workshop prepares itself in the background and the console has the QR code.
+The first visitor owns the workshop. On /setup: choose Passport for deployed apps, direct OIDC
+for an app auth integration, or a Vercel Enterprise team; then choose the room size and prepare.
+Save the instructor password shown once. The /workshop instructor console has connection steps,
+a short signup link for attendees to open on their laptops, and an optional QR code.
 
 Later:
     curl -s $URL/api/lifecycle/status      # is Pocket ID running? (never wakes it)
