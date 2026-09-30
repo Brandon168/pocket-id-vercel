@@ -11,6 +11,8 @@ metadata:
 
 Scope: this skill and `docs/vercel-team-setup.md` cover Pocket ID only. Keep customer-specific Entra or other IdP guides separate; do not adapt these Custom OIDC screenshots into a named-provider SAML walkthrough. The September 5 rehearsal verified configuration but did not establish a successful attendee landing on a non-test Enterprise team. Require a real attendee dry run before an event; do not describe this as an already-proven end-to-end workshop outcome.
 
+Vercel staff: the internal runbook for the workshop team, domain, and cleanup is the Notion page [Workshop test teams with temporary accounts (Pocket ID on Vercel)](https://app.notion.com/p/vercel/Workshop-test-teams-with-temporary-accounts-Pocket-ID-on-Vercel-3d2e06b059c481088028c25ff2985c0f). Point Vercel users there for the team-creation step.
+
 One deployment per workshop. Attendees open a short `/join` link on their workshop laptop, pick a username, and create a passkey. QR is optional. Runs upstream Pocket ID inside a Vercel Sandbox behind a small Next.js controller with an instructor console at `/workshop`. Pocket ID admin is the separate upstream UI for users and clients. Deleted after the event.
 
 Three modes, chosen at first run and locked after preparation:
@@ -49,11 +51,14 @@ Or from a checkout: `./deploy.sh --scope <team> --project <name>`. Options: `--i
 
 Alternative: the **Deploy with Vercel** button in the README (same result; clones a repo into the user's GitHub).
 
+The script first reads the hosting team's defaults (`vercel api /v2/teams/<slug>`, read-only) and stops before creating anything if a setting would break the IdP: Deployment Protection on all domains, a Passport default for new projects, or Hobby. It warns about Organization child teams (Neon), automatic project expiry, and short production retention. Relay those lines to the user; only pass `--skip-preflight` if they will fix the project setting by hand before `/setup`.
+
 Requirements the script cannot fix for you, check them with the user first:
 
 - **Pro or Enterprise team.** The idle cron runs every minute and Sandboxes exceed Hobby limits.
 - **The production `.vercel.app` domain must stay public.** Attendees have no Vercel account yet, and Vercel's SSO must fetch the discovery document. Standard Deployment Protection is fine; "All Deployments" or a team policy enforcing authentication on production domains is not. Vercel Toolbar and WAF challenge mode also break Pocket ID.
 - **Neon Marketplace install may be rejected on teams that are children of a Vercel Organization.** If `vercel integration add neon` fails, deploy into a standalone team or bring your own Postgres with `--database-url`.
+- **Project expiration.** Some internal teams expire new projects after a month by default. Extend or turn off expiration on the IdP project if the workshop, or the team SSO that depends on it, lasts longer.
 - **Pick the project name once.** Passkeys are bound to the hostname; renaming or adding a custom domain later invalidates every passkey.
 
 Verify: `curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' https://<project>.vercel.app/` → `307 …/setup`.
