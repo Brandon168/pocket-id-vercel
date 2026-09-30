@@ -72,3 +72,13 @@ test('choose Passport, prepare, copy credentials, and share the laptop signup li
   await page.screenshot({ path: 'test-results/workshop-passport-mobile.png', fullPage: true });
   expect(errors).toEqual([]);
 });
+
+test('an attendee page during a Pocket ID cold start shows a self-refreshing page, not JSON', async ({ page, request }) => {
+  // The test server's database is unreachable, so every proxied request takes the cold-start failure path.
+  const response = await page.goto('/signup?token=example');
+  expect(response?.status()).toBe(503);
+  await expect(page.getByRole('heading', { name: 'Starting the workshop sign-in' })).toBeVisible();
+  const api = await request.get('/api/signup/setup');
+  expect(api.status()).toBe(503);
+  expect(await api.json()).toEqual({ error: 'Pocket ID is starting. Retry in a few seconds.' });
+});
