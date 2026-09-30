@@ -1,10 +1,13 @@
 import { after } from 'next/server';
 import { getKnownSandboxOrigin, invalidateKnownSandboxOrigin, recordProxyActivity } from '@/lib/sandbox-control';
 import { isSetupComplete } from '@/lib/secrets';
+import { isPageNavigation, startingPage } from '@/lib/starting-page';
 import { applySignupEmailPolicy, applySignupNamePolicy, autoSyncAfterSignup, getSignupEmailPolicy } from '@/lib/workshop';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+// A first boot downloads Pocket ID and waits up to SANDBOX_STARTUP_TIMEOUT_MS
+// (60 s by default); leave room for that plus the proxied request.
+export const maxDuration = 120;
 export const dynamic = 'force-dynamic';
 
 const hopByHopHeaders: Record<string, true> = {
@@ -95,10 +98,13 @@ async function proxy(request: Request): Promise<Response> {
   } catch (error) {
     invalidateKnownSandboxOrigin();
     console.error('Pocket ID proxy failed', error);
-    return Response.json(
-      { error: 'Pocket ID is starting. Retry in a few seconds.' },
-      { status: 503, headers: { 'retry-after': '2', 'cache-control': 'no-store' } },
-    );
+    const headers = { 'retry-after': '2', 'cache-control': 'no-store' };
+    // An attendee opening a page during a cold start gets a page that retries
+    // itself; API callers keep the JSON answer.
+    if (isPageNavigation(request)) {
+      return new Response(startingPage, { status: 503, headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } });
+    }
+    return Response.json({ error: 'Pocket ID is starting. Retry in a few seconds.' }, { status: 503, headers });
   }
 }
 

@@ -57,7 +57,11 @@ async function deleteStoppedActorHost(): Promise<void> {
   const connectionString = process.env.DATABASE_URL_UNPOOLED;
   if (!connectionString) throw new Error('DATABASE_URL_UNPOOLED is required');
   const sql = neon(connectionString);
-  await sql`DELETE FROM francis_hosts WHERE host_address = '127.0.0.1:1414'`;
+  // The table does not exist until Pocket ID has booted once.
+  await sql`DELETE FROM francis_hosts WHERE host_address = '127.0.0.1:1414'`.catch((error: unknown) => {
+    // 42P01: undefined_table.
+    if ((error as { code?: string })?.code !== '42P01') throw error;
+  });
 }
 
 
@@ -103,6 +107,11 @@ async function startPocketId(sandbox: Sandbox, origin: string): Promise<void> {
     "pgrep -x pocket-id 2>/dev/null | wc -l",
   ]);
   if ((await processCount.stdout()).trim() === '0') {
+    // No Pocket ID process in the only Sandbox allowed to run one, so any
+    // actor-host row for its loopback address is left over from a process
+    // that did not shut down cleanly (crash, or the platform ending the
+    // session). Pocket ID would refuse to start for 90 seconds otherwise.
+    await deleteStoppedActorHost();
     await sandbox.runCommand({
       cmd: 'sh',
       args: ['-lc', '. /tmp/pocket-env.sh && exec "$(command -v /app/pocket-id 2>/dev/null || echo /tmp/pocket-id)" >>/tmp/pocket-id.log 2>&1'],
