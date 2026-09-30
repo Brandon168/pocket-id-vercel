@@ -8,6 +8,8 @@ export type WorkshopSetup = {
   signupTokens: string[];
   capacity: number;
   expiresAt: Date;
+  // Tokens replaced by a renewal; they keep working until they expire.
+  retiredSignupTokens?: string[];
 };
 
 // What attendees sign in to once they have a passkey.
@@ -90,6 +92,8 @@ async function initializeWorkshopSetup(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `;
+  // Added with signup renewal: earlier tokens still count toward signups.
+  await sql`ALTER TABLE pocket_id_workshop_setup ADD COLUMN IF NOT EXISTS retired_signup_tokens jsonb NOT NULL DEFAULT '[]'::jsonb`;
 }
 
 function mapSetup(row: Record<string, unknown>): WorkshopSetup {
@@ -99,6 +103,7 @@ function mapSetup(row: Record<string, unknown>): WorkshopSetup {
     adminLoginUrl: String(row.admin_login_url),
     joinUrl: String(row.join_url),
     signupTokens: row.signup_tokens as string[],
+    retiredSignupTokens: (row.retired_signup_tokens as string[] | undefined) ?? [],
     capacity: Number(row.capacity),
     expiresAt: new Date(String(row.expires_at)),
   };
@@ -123,6 +128,19 @@ export async function saveWorkshopSetup(name: string, setup: WorkshopSetup): Pro
     ON CONFLICT (name) DO UPDATE SET
       admin_login_url = EXCLUDED.admin_login_url,
       updated_at = now()
+  `;
+}
+
+// Points /join at a new set of signup tokens (renewal). The rotation counter
+// restarts; the old tokens stay valid in Pocket ID until they expire.
+export async function replaceSignupTokens(name: string, tokens: string[], capacity: number, expiresAt: Date): Promise<void> {
+  await initializeWorkshopSetup();
+  await workshopSql()`
+    UPDATE pocket_id_workshop_setup
+    SET retired_signup_tokens = retired_signup_tokens || signup_tokens,
+        signup_tokens = ${JSON.stringify(tokens)}::jsonb, capacity = ${capacity},
+        expires_at = ${expiresAt.toISOString()}, next_token = 0, updated_at = now()
+    WHERE name = ${name}
   `;
 }
 
