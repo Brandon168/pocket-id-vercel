@@ -21,6 +21,8 @@
 #   --neon-plan <plan-id>          Neon plan id if your team requires choosing one.
 #   --idle-minutes <n>             Stop the Sandbox after this long without traffic (default 120).
 #   --ref <git-ref>                Branch or tag of the template to deploy (default main).
+#   --repo <owner/name>            Template repository (default Brandon168/pocket-id-vercel).
+#                                  Private repos work when the GitHub CLI is signed in.
 #   --source <dir>                 Deploy a local checkout instead of cloning (for development).
 #   --existing-project             Reuse an existing project of this name instead of creating it.
 #   --no-open                      Do not open /setup in a browser when done.
@@ -31,7 +33,9 @@
 # Requires: vercel CLI (logged in), git, curl, node. Pro or Enterprise team.
 set -euo pipefail
 
-REPO_URL="https://github.com/Brandon168/pocket-id-vercel.git"
+# owner/name of the template repository. Override with --repo or
+# POCKET_ID_TEMPLATE_REPO, for example when the template lives in a private repo.
+REPO="${POCKET_ID_TEMPLATE_REPO:-Brandon168/pocket-id-vercel}"
 SCOPE=""
 PROJECT=""
 DB_URL=""
@@ -45,7 +49,7 @@ OPEN_BROWSER=1
 PREFLIGHT=1
 
 usage() {
-  if [[ -f "$0" ]]; then sed -n '2,29p' "$0"; else echo "usage: deploy.sh --scope <team-slug> [--project <name>] [--database-url <url>] [--no-open]"; fi
+  if [[ -f "$0" ]]; then sed -n '2,33p' "$0"; else echo "usage: deploy.sh --scope <team-slug> [--project <name>] [--database-url <url>] [--no-open]"; fi
 }
 
 die() { printf '\n\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -61,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --neon-plan) NEON_PLAN="$2"; shift 2 ;;
     --idle-minutes) IDLE_MINUTES="$2"; shift 2 ;;
     --ref) REF="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
     --source) SOURCE="$2"; shift 2 ;;
     --existing-project) EXISTING=1; shift ;;
     --no-open) OPEN_BROWSER=0; shift ;;
@@ -99,8 +104,17 @@ if [[ -n "$SOURCE" ]]; then
   note "copying $SOURCE"
   ( cd "$SOURCE" && tar --exclude=.vercel --exclude=node_modules --exclude=.next --exclude=.git --exclude=.local -cf - . ) | ( cd "$WORK" && tar -xf - )
 else
-  note "git clone --depth 1 --branch $REF"
-  git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$WORK"
+  # gh uses the signed-in GitHub account, so private repos work; plain git is
+  # the fallback for public ones.
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    note "gh repo clone $REPO ($REF)"
+    gh repo clone "$REPO" "$WORK" -- --quiet --depth 1 --branch "$REF" \
+      || die "Could not clone $REPO at $REF. For a private repo, your GitHub account needs read access (gh auth status)."
+  else
+    note "git clone $REPO ($REF)"
+    git clone --quiet --depth 1 --branch "$REF" "https://github.com/$REPO.git" "$WORK" \
+      || die "Could not clone $REPO at $REF. For a private repo, install the GitHub CLI and run gh auth login."
+  fi
 fi
 [[ -f "$WORK/vercel.json" ]] || die "template checkout looks wrong (no vercel.json)"
 
