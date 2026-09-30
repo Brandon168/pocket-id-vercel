@@ -24,9 +24,11 @@
 #   --source <dir>                 Deploy a local checkout instead of cloning (for development).
 #   --existing-project             Reuse an existing project of this name instead of creating it.
 #   --no-open                      Do not open /setup in a browser when done.
+#   --skip-preflight               Deploy even if the team check finds a blocking setting
+#                                  (for example, you will lower Deployment Protection by hand).
 #   -h, --help                     Show this help.
 #
-# Requires: vercel CLI (logged in), git, curl. Pro or Enterprise team.
+# Requires: vercel CLI (logged in), git, curl, node. Pro or Enterprise team.
 set -euo pipefail
 
 REPO_URL="https://github.com/Brandon168/pocket-id-vercel.git"
@@ -40,6 +42,7 @@ REF="main"
 SOURCE=""
 EXISTING=""
 OPEN_BROWSER=1
+PREFLIGHT=1
 
 usage() {
   if [[ -f "$0" ]]; then sed -n '2,29p' "$0"; else echo "usage: deploy.sh --scope <team-slug> [--project <name>] [--database-url <url>] [--no-open]"; fi
@@ -61,12 +64,13 @@ while [[ $# -gt 0 ]]; do
     --source) SOURCE="$2"; shift 2 ;;
     --existing-project) EXISTING=1; shift ;;
     --no-open) OPEN_BROWSER=0; shift ;;
+    --skip-preflight) PREFLIGHT=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown flag: $1 (see --help)" ;;
   esac
 done
 
-for tool in vercel git curl; do
+for tool in vercel git curl node; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required. Install it and run again."
 done
 
@@ -100,6 +104,23 @@ else
 fi
 [[ -f "$WORK/vercel.json" ]] || die "template checkout looks wrong (no vercel.json)"
 
+# Read-only look at the team's defaults for new projects: protection on the
+# production domain, a Passport default, automatic project expiry, and short
+# deployment retention.
+if [[ -f "$WORK/scripts/team-preflight.mjs" ]]; then
+  step "Checking $SCOPE for settings that affect a workshop IdP"
+  PREFLIGHT_STATUS=0
+  PREFLIGHT_OUT="$(vercel api "/v2/teams/$SCOPE" --raw 2>/dev/null | node "$WORK/scripts/team-preflight.mjs" --check)" || PREFLIGHT_STATUS=$?
+  if [[ -n "$PREFLIGHT_OUT" ]]; then
+    while IFS= read -r line; do note "$line"; done <<< "$PREFLIGHT_OUT"
+  else
+    note "nothing to flag"
+  fi
+  if [[ "$PREFLIGHT_STATUS" == 2 && "$PREFLIGHT" == 1 ]]; then
+    die "This team's defaults would break the identity provider (BLOCK above). Pick another --scope, or pass --skip-preflight if you will fix the project settings by hand before /setup."
+  fi
+fi
+
 step "Creating project $PROJECT in $SCOPE"
 if [[ -n "$EXISTING" ]]; then
   note "reusing existing project"
@@ -120,7 +141,15 @@ add_env() {
 }
 
 step "Database"
-if [[ -n "$DB_URL" ]]; then
+# A redeploy of an existing project keeps its database. Installing Neon again
+# fails on the existing env vars but still leaves an unconnected Neon resource.
+HAS_DB=""
+if [[ -n "$EXISTING" ]] && vercel env ls production --scope "$SCOPE" --cwd "$WORK" 2>/dev/null | grep -qE '^ *DATABASE_URL_UNPOOLED '; then
+  HAS_DB=1
+fi
+if [[ -n "$HAS_DB" && -z "$DB_URL" ]]; then
+  note "project already has DATABASE_URL_UNPOOLED; keeping its database"
+elif [[ -n "$DB_URL" ]]; then
   note "using the Postgres you provided"
   add_env DATABASE_URL "$DB_URL"
   add_env DATABASE_URL_UNPOOLED "$DB_URL_UNPOOLED"
@@ -131,8 +160,8 @@ else
   if ! vercel "${NEON_ARGS[@]}"; then
     cat <<EOF >&2
 
-Neon could not be installed on this team. Two known causes:
-  • The team is a child of a Vercel Organization (Marketplace installs are rejected there today).
+Neon could not be installed on this team. Common causes:
+  • The team has not accepted the Neon Marketplace terms yet, or you lack permission to install integrations.
   • The team needs a plan choice: run  vercel integration add neon --scope $SCOPE  once by hand and
     re-run this script with --existing-project --neon-plan <id>.
 Or bring your own Postgres (Neon, Supabase, RDS…) and re-run with:

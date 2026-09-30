@@ -4,6 +4,8 @@ Running a hands-on workshop loses its first 20–30 minutes to accounts: signups
 
 It runs upstream [Pocket ID](https://github.com/pocket-id/pocket-id) unmodified inside one Vercel Sandbox, fronted by a small Next.js controller. Deploy it, prepare the workshop, and put the short `/join` link on a slide. Attendees open it on their workshop laptop; a QR code is optional.
 
+Vercel staff: the internal runbook (creating the workshop team, domains, and cleanup) is [Workshop test teams with temporary accounts (Pocket ID on Vercel)](https://app.notion.com/p/vercel/Workshop-test-teams-with-temporary-accounts-Pocket-ID-on-Vercel-3d2e06b059c481088028c25ff2985c0f) in Notion. It needs a Vercel login.
+
 ## Which mode do you need?
 
 Pick this on the first-run screen. You can change it from the console until you click **Prepare workshop**.
@@ -32,7 +34,7 @@ Use **Vercel team mode** when attendees need Vercel accounts to deploy, use v0, 
 
 Two clicks after the deploy finishes. The console can also change options and re-run Prepare if something interrupted it; every step is safe to repeat.
 
-Pro or Enterprise is required for the deploying team: the idle cron runs every minute and Sandbox sessions exceed Hobby limits. The production domain must stay publicly reachable (see below).
+Pro or Enterprise is required for the deploying team: the idle cron runs every minute and Sandbox sessions exceed Hobby limits. The production domain must stay publicly reachable (see below). Team-level defaults can break this before `/setup` even loads; see [Team settings that get in the way](#team-settings-that-get-in-the-way).
 
 ### Or from your terminal
 
@@ -44,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/Brandon168/pocket-id-vercel/main/de
   | bash -s -- --scope <team-slug> --project idp-ws-<date>-<topic>
 ```
 
-It creates the project, installs Neon from the Marketplace, deploys, and opens `/setup` for you. `./deploy.sh --help` lists the options: `--idle-minutes`, `--database-url` to bring your own Postgres (for teams where the Neon Marketplace install is not allowed, such as children of a Vercel Organization), `--existing-project`, `--ref`. Tear down with `./teardown.sh <project> --scope <team> --yes`.
+It creates the project, installs Neon from the Marketplace, deploys, and opens `/setup` for you. `./deploy.sh --help` lists the options: `--idle-minutes`, `--database-url` to bring your own Postgres (for teams where the Neon Marketplace install is not allowed), `--existing-project`, `--ref`. Tear down with `./teardown.sh <project> --scope <team> --yes`.
 
 ### Or let your agent do it
 
@@ -59,6 +61,18 @@ Then ask your agent to "set up a passkey identity provider for Thursday's worksh
 ### Why the production domain matters
 
 The controller uses `https://<project>.vercel.app` as Pocket ID's `APP_URL`, OIDC issuer, and WebAuthn relying-party ID. Passkeys registered on any other hostname will not work, and neither will a custom domain added later. Standard Deployment Protection leaves this domain public while protecting deployment URLs, which is what you want; do not switch protection to "All Deployments", and do not deploy to a team that enforces authentication on production domains. Attendees have no account to authenticate with yet — that is the whole point — and in Vercel team mode Vercel's SSO service must reach the discovery document and token endpoint server-to-server.
+
+### Team settings that get in the way
+
+The team that **hosts** the IdP project (not necessarily the attendees' team) applies its defaults to every new project. `deploy.sh` reads them with `vercel api /v2/teams/<slug>` before creating anything and stops on a blocking setting (`--skip-preflight` overrides that if you will fix the project by hand). The Deploy Button can't check these, so review them yourself.
+
+| Team setting | Effect on the IdP | What to do |
+|---|---|---|
+| Deployment Protection on **all** domains (Vercel Authentication or Password), especially with strict protection settings | Production `.vercel.app` needs a login, so attendees and Vercel's SSO can't reach Pocket ID. **Blocks.** | Deploy to another team, or set the new project to Standard Protection before `/setup` |
+| Default **Passport** for new projects | The IdP ends up behind the protection it supplies. **Blocks.** | Deploy to another team, or remove Passport from the IdP project |
+| **Project expiration** on by default | The IdP project is deleted on schedule, stranding attendees and any team that enforces SSO through it | Extend or turn off expiration on the IdP project for the life of the workshop |
+| Short **production deployment retention** (under 30 days) | Old production deployments are removed | Redeploy, or raise the project's retention, for long-running workshops |
+| **Hobby** plan | Idle cron and Sandbox sessions exceed Hobby limits. **Blocks.** | Use a Pro or Enterprise team |
 
 ## Vercel team mode: connecting the team
 
@@ -195,5 +209,6 @@ Run `npm run typecheck` and `npm run build`. Then install the test browser with 
 - `lib/workshop{,-store,-auth}.ts` — provisioning, Vercel SSO/SCIM connection, persistence, instructor access.
 - `lib/sandbox-control.ts`, `lib/lifecycle-store.ts` — Sandbox state machine and lease.
 - `deploy.sh`, `teardown.sh` — terminal equivalents of the Deploy Button and of deleting the project plus its Neon resource.
+- `scripts/team-preflight.mjs` — read-only check of the hosting team's defaults, run by `deploy.sh`.
 - `skills/pocket-id-workshop/SKILL.md` — agent skill covering deploy, setup, team connection, day-of operations, teardown.
 - `image/Dockerfile`, `setup.sh`, `sandbox-up.mjs`, `sandbox-down.mjs` — optional legacy tooling.

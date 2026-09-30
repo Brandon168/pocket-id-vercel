@@ -65,7 +65,7 @@ async function proxy(request: Request): Promise<Response> {
     const upstreamBody = await requestBody(request, inboundUrl.pathname);
     // The body may have been rewritten; let fetch recompute the length.
     headers.delete('content-length');
-    const response = await fetch(upstreamUrl, {
+    const send = (target: URL) => fetch(target, {
       method: request.method,
       headers,
       body: upstreamBody,
@@ -73,6 +73,20 @@ async function proxy(request: Request): Promise<Response> {
       cache: 'no-store',
       signal: AbortSignal.timeout(45_000),
     });
+    let response = await send(upstreamUrl);
+    // The Sandbox answers 502/504 itself when nothing listens on the port,
+    // for example after Pocket ID crashed. The origin is cached per instance,
+    // so without this the proxy would relay those errors until the cache
+    // expired. Drop the cache, let the next lookup health-check and restart
+    // Pocket ID, and retry once when replaying the request is harmless.
+    if (await pocketIdIsDown(response, origin)) {
+      invalidateKnownSandboxOrigin();
+      const restarted = await getKnownSandboxOrigin();
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        throw new Error('Pocket ID was restarted; the request was not replayed');
+      }
+      response = await send(new URL(inboundUrl.pathname + inboundUrl.search, restarted));
+    }
     // A new attendee in Vercel team mode: push them to the team shortly,
     // without holding up their response.
     if (request.method === 'POST' && inboundUrl.pathname === '/api/signup' && response.status === 201) {
@@ -105,6 +119,16 @@ async function proxy(request: Request): Promise<Response> {
       return new Response(startingPage, { status: 503, headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } });
     }
     return Response.json({ error: 'Pocket ID is starting. Retry in a few seconds.' }, { status: 503, headers });
+  }
+}
+
+async function pocketIdIsDown(response: Response, origin: string): Promise<boolean> {
+  if (response.status !== 502 && response.status !== 504) return false;
+  try {
+    const health = await fetch(`${origin}/healthz`, { cache: 'no-store', signal: AbortSignal.timeout(2_000) });
+    return health.status !== 204;
+  } catch {
+    return true;
   }
 }
 
