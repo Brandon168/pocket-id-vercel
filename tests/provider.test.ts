@@ -17,7 +17,7 @@ vi.mock('@neondatabase/serverless', () => ({
 vi.mock('../lib/sandbox-control', () => ({ getKnownSandboxOrigin: async () => state.origin }));
 vi.mock('../lib/lifecycle-store', () => ({ getLifecycleState: async () => ({ status: 'running' }) }));
 
-// Opt-in, real Pocket ID v2.14.0 process. Controller SQL runs in PGlite;
+// Opt-in, real Pocket ID process (the version lib/sandbox-control.ts pins). Controller SQL runs in PGlite;
 // provider data is SQLite in a fresh temporary directory. No Vercel calls.
 describe.skipIf(!process.env.POCKET_ID_TEST_BINARY)('real Pocket ID provider', () => {
   let directory: string;

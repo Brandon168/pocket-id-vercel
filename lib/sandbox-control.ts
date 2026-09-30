@@ -17,6 +17,12 @@ import {
 const sandboxName = process.env.SANDBOX_NAME ?? 'pocket-id';
 const sandboxPort = 1411;
 const sandboxImage = process.env.SANDBOX_IMAGE ?? 'vercel/sandbox/universal:latest';
+// Downloaded once, when the named Sandbox is first created; its snapshot keeps
+// the binary. Existing workshops keep the version they started with, which
+// matters because Pocket ID refuses to run against a database a newer version
+// has migrated, and v2.15+ invalidates earlier session cookies.
+const pocketIdVersion = 'v2.16.0';
+const pocketIdSha256 = '4ba26810e8d2c2d46aea42d8e960cb457cf8bc36cc009446a18d7d856abd3aa7';
 const startupTimeoutMs = Number(process.env.SANDBOX_STARTUP_TIMEOUT_MS ?? 60_000);
 let knownOrigin: string | null = null;
 let knownOriginUntil = 0;
@@ -142,7 +148,7 @@ async function resumeAsLeaseOwner(owner: string): Promise<string> {
       if (sandboxImage !== 'vercel/sandbox/universal:latest') return;
       const download = await created.runCommand('sh', [
         '-lc',
-        'curl -fsSL https://github.com/pocket-id/pocket-id/releases/download/v2.14.0/pocket-id_linux_amd64 -o /tmp/pocket-id && echo "da32b4e7bc8ba817ae2cee6e62634834bf234965fa237d25ab38fc3bec58ef48  /tmp/pocket-id" | sha256sum -c - && chmod 700 /tmp/pocket-id',
+        `curl -fsSL https://github.com/pocket-id/pocket-id/releases/download/${pocketIdVersion}/pocket-id_linux_amd64 -o /tmp/pocket-id && echo "${pocketIdSha256}  /tmp/pocket-id" | sha256sum -c - && chmod 700 /tmp/pocket-id`,
       ]);
       if (download.exitCode !== 0) throw new Error(`Pocket ID download failed: ${await download.stderr()}`);
     },
