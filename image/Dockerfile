@@ -1,7 +1,7 @@
 # Pin a release tag at Phase 1 (check https://github.com/pocket-id/pocket-id/releases). Alpine variant: has /bin/sh.
 # Do NOT use -distroless (no shell → ENTRYPOINT below can't run). Do NOT use the image's entrypoint.sh
 # (runs as root, adduser/mkdir /app/data/chown) — we bypass it and run as 1000 directly.
-FROM ghcr.io/pocket-id/pocket-id:v2.14.0
+FROM ghcr.io/pocket-id/pocket-id:v2.16.0
 
 ENV APP_ENV=production \
     PORT=1411 \
