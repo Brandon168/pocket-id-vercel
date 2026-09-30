@@ -11,6 +11,7 @@ import {
   getWorkshopSetup,
   recordSyncAttempt,
   releasePrepareLease,
+  replaceSignupTokens,
   saveVercelConnection,
   savePassportConnection,
   saveWorkshopSetup,
@@ -476,9 +477,9 @@ export async function setupWorkshop(requestOrigin: string): Promise<WorkshopSetu
   if (!(await acquirePrepareLease(workshopName))) throw new PrepareInProgressError();
   try {
     return await provisionWorkshop(requestOrigin);
-  } catch (error) {
+  } finally {
+    // Once the setup row exists, the early return above answers repeat calls.
     await releasePrepareLease(workshopName).catch(() => undefined);
-    throw error;
   }
 }
 
@@ -526,6 +527,34 @@ async function provisionWorkshop(requestOrigin: string): Promise<WorkshopSetup> 
   };
   await saveWorkshopSetup(workshopName, setup);
   return setup;
+}
+
+// Signup tokens exist from Prepare and expire 72 hours later, so a workshop
+// prepared early (or a multi-day event) needs fresh ones. Mints the same
+// number of tokens with the same groups, points /join at them, and restarts
+// the 72-hour window. Earlier tokens keep working until they expire.
+export async function renewSignupTokens(): Promise<WorkshopSetup> {
+  const setup = await getWorkshopSetup(workshopName);
+  if (!setup) throw new InvalidInputError('Prepare the workshop first');
+  if (!(await acquirePrepareLease(workshopName))) throw new PrepareInProgressError();
+  try {
+    const options = await getWorkshopOptions(workshopName);
+    const origin = await getKnownSandboxOrigin();
+    const groupIds = [(await ensureGroup(origin, workshopGroupName)).id];
+    if (options.mode === 'vercel-team') groupIds.push((await ensureGroup(origin, vercelMemberGroupName)).id);
+    const tokenCount = Math.max(1, setup.signupTokens.length);
+    const signupTokens = await mintSignupTokens(origin, groupIds, tokenCount);
+    const renewed: WorkshopSetup = {
+      ...setup,
+      signupTokens,
+      capacity: tokenCount * tokenUsageLimit,
+      expiresAt: new Date(Date.now() + 72 * 60 * 60_000),
+    };
+    await replaceSignupTokens(workshopName, renewed.signupTokens, renewed.capacity, renewed.expiresAt);
+    return renewed;
+  } finally {
+    await releasePrepareLease(workshopName).catch(() => undefined);
+  }
 }
 
 export type AdminLogin = { loginUrl: string; ttl: string };
@@ -688,11 +717,18 @@ export async function getSignupProgress(): Promise<SignupProgress> {
   const state = await getLifecycleState(workshopName);
   if (state.status !== 'running') return { used: 0, capacity: setup.capacity, sandboxRunning: false };
   const origin = await getKnownSandboxOrigin();
-  const listed = await pocketApi<Paginated<SignupToken>>(origin, '/signup-tokens?pagination[limit]=100');
-  const ours = new Set(setup.signupTokens);
-  const used = (listed.data ?? [])
-    .filter((token) => ours.has(token.token))
-    .reduce((total, token) => total + token.usageCount, 0);
+  // Renewals add tokens; count signups across every token this workshop issued.
+  const ours = new Set([...setup.signupTokens, ...(setup.retiredSignupTokens ?? [])]);
+  // Pocket ID pages at most 100 tokens; expired tokens drop out of the list.
+  let used = 0;
+  for (let page = 1; page <= 20; page += 1) {
+    const listed = await pocketApi<Paginated<SignupToken> & { pagination?: PaginationInfo }>(
+      origin,
+      `/signup-tokens?pagination[limit]=100&pagination[page]=${page}`,
+    );
+    used += (listed.data ?? []).filter((token) => ours.has(token.token)).reduce((total, token) => total + token.usageCount, 0);
+    if (page >= (listed.pagination?.totalPages ?? 1)) break;
+  }
   return { used, capacity: setup.capacity, sandboxRunning: true };
 }
 

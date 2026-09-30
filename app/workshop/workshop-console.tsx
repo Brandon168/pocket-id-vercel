@@ -224,6 +224,24 @@ export function WorkshopConsole() {
     }
   }
 
+  const [renewing, setRenewing] = useState(false);
+  const [renewError, setRenewError] = useState('');
+
+  async function renewSignup() {
+    setRenewing(true);
+    setRenewError('');
+    try {
+      const response = await fetch(`${window.location.origin}/api/workshop/signups`, { method: 'POST' });
+      const result = await response.json() as WorkshopSetup & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Renewing signup failed');
+      setSetup(result);
+    } catch (cause) {
+      setRenewError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRenewing(false);
+    }
+  }
+
   async function copy(value: string, label: string) {
     try {
       await navigator.clipboard.writeText(value);
@@ -332,6 +350,7 @@ export function WorkshopConsole() {
   const vercelTeam = status?.options.mode === 'vercel-team';
   const passport = status?.options.mode === 'passport';
   const qrUrl = `/api/workshop/qr?url=${encodeURIComponent(setup.joinUrl)}`;
+  const signupClosed = new Date(setup.expiresAt).getTime() <= Date.now();
   return (
     <div className="console-grid">
       <section className="panel join-panel">
@@ -357,9 +376,19 @@ export function WorkshopConsole() {
           <a className="download" href={`${qrUrl}&download=1`}>Download QR code</a>
         </details>
         <p className="muted small">
-          Use the same signup link for everyone. Signup closes {new Date(setup.expiresAt).toLocaleString()}.
+          Use the same signup link for everyone.{' '}
+          {signupClosed
+            ? <strong>Signup closed {new Date(setup.expiresAt).toLocaleString()}.</strong>
+            : <>Signup closes {new Date(setup.expiresAt).toLocaleString()}.</>}
           {vercelTeam && <> Email is assigned automatically as <code>username@{status?.options.emailDomain}</code>; attendees can leave it blank.</>}
         </p>
+        <div className="inline-actions">
+          <button className={signupClosed ? 'primary' : 'secondary'} disabled={renewing} onClick={renewSignup}>
+            {renewing ? 'Renewing signup…' : 'Renew signup for 72 hours'}
+          </button>
+        </div>
+        {renewError && <p className="error" role="alert">{renewError}</p>}
+        <p className="muted small">Renewing keeps the same link and capacity, and starts Pocket ID if it is idle. Links opened earlier keep working until they expire.</p>
       </section>
 
       <section className="panel admin-panel">

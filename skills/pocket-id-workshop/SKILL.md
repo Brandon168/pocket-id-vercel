@@ -116,6 +116,7 @@ curl -s -u ":<password>" https://<project>.vercel.app/api/workshop/vercel
 
 - Lead the slide with `https://<project>.vercel.app/join` and ask attendees to open it on their workshop laptop. Optional QR (public SVG): `https://<project>.vercel.app/api/workshop/qr?url=https%3A%2F%2F<project>.vercel.app%2Fjoin&download=1`. Slide copy: *username = firstname-lastname; create a passkey when asked.* Email is optional unless the workshop requires it.
 - Signup count without waking Pocket ID: `GET /api/workshop/signups`.
+- Signup expires 72 hours after Prepare. Prepared early, or a multi-day event: `POST /api/workshop/signups` renews it for 72 hours with fresh tokens behind the same `/join` link (starts Pocket ID if idle). `/join` answering 410 means signup has expired.
 - Attendee list: `GET /api/workshop/attendees?search=<term>&page=1` (add `&wake=1` if Pocket ID is idle). Each row shows `hasPasskey`.
 - Attendee locked out or skipped passkey: `POST /api/workshop/login-link {"userId":"…"}` → one-time 12-character code and link, valid one hour, no email.
 - Attendee missing in Vercel (team mode): check the row's email has the right domain, then `POST /api/workshop/vercel/sync`. `GET /api/workshop/vercel` shows `scim.lastError` in plain language when a push failed.
