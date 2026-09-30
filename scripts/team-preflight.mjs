@@ -35,10 +35,6 @@ export function preflight(team) {
     block('The team applies Vercel Passport to new projects by default. The IdP cannot sit behind the Passport protection it supplies. Deploy to a team without a Passport default, or remove Passport from the new project first.');
   }
 
-  if (team?.parentId || team?.orgRootTeamId) {
-    warn('The team belongs to a Vercel Organization. Neon Marketplace installs are rejected on Organization child teams today; pass --database-url with a Postgres you control.');
-  }
-
   const expiration = team?.projectExpiration;
   if (expiration?.enabled && expiration?.newProjectsExpireByDefault) {
     warn(`New projects on this team expire automatically (${expiration.defaultExpiration ?? 'default period'}). An expired IdP strands attendees and any team that enforces SSO through it. Extend or disable the project's expiration after deploy if the workshop outlives it.`);

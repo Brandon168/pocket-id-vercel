@@ -8,7 +8,7 @@ import { preflight } from '../scripts/team-preflight.mjs';
 
 // Shapes taken from real `vercel api /v2/teams/<slug>` responses (2026-09-30), trimmed.
 const standalonePro = { billing: { plan: 'enterprise' }, defaultDeploymentProtection: { ssoProtection: { deploymentType: 'all_except_custom_domains' } } };
-const orgChildAllProtected = {
+const allDomainsProtected = {
   billing: { plan: 'enterprise' }, parentId: 'org_x', orgRootTeamId: 'team_root',
   defaultDeploymentProtection: { ssoProtection: { deploymentType: 'all' } },
   strictDeploymentProtectionSettings: { enabled: true },
@@ -24,8 +24,8 @@ it('passes a standalone team with standard protection', () => {
 });
 
 it('blocks teams that protect production domains or apply Passport to new projects', () => {
-  expect(levels(orgChildAllProtected)).toEqual(['BLOCK', 'WARN', 'WARN']);
-  expect(preflight(orgChildAllProtected)[0].text).toMatch(/Strict protection settings are on/);
+  expect(levels(allDomainsProtected)).toEqual(['BLOCK', 'WARN']);
+  expect(preflight(allDomainsProtected)[0].text).toMatch(/Strict protection settings are on/);
   expect(levels(passportDefault)).toEqual(['BLOCK']);
   expect(levels({ billing: { plan: 'hobby' } })).toEqual(['BLOCK']);
 });

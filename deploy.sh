@@ -105,8 +105,8 @@ fi
 [[ -f "$WORK/vercel.json" ]] || die "template checkout looks wrong (no vercel.json)"
 
 # Read-only look at the team's defaults for new projects: protection on the
-# production domain, a Passport default, Organization membership (Neon),
-# automatic project expiry, and short deployment retention.
+# production domain, a Passport default, automatic project expiry, and short
+# deployment retention.
 if [[ -f "$WORK/scripts/team-preflight.mjs" ]]; then
   step "Checking $SCOPE for settings that affect a workshop IdP"
   PREFLIGHT_STATUS=0
@@ -152,8 +152,8 @@ else
   if ! vercel "${NEON_ARGS[@]}"; then
     cat <<EOF >&2
 
-Neon could not be installed on this team. Two known causes:
-  • The team is a child of a Vercel Organization (Marketplace installs are rejected there today).
+Neon could not be installed on this team. Common causes:
+  • The team has not accepted the Neon Marketplace terms yet, or you lack permission to install integrations.
   • The team needs a plan choice: run  vercel integration add neon --scope $SCOPE  once by hand and
     re-run this script with --existing-project --neon-plan <id>.
 Or bring your own Postgres (Neon, Supabase, RDS…) and re-run with:

@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/Brandon168/pocket-id-vercel/main/de
   | bash -s -- --scope <team-slug> --project idp-ws-<date>-<topic>
 ```
 
-It creates the project, installs Neon from the Marketplace, deploys, and opens `/setup` for you. `./deploy.sh --help` lists the options: `--idle-minutes`, `--database-url` to bring your own Postgres (for teams where the Neon Marketplace install is not allowed, such as children of a Vercel Organization), `--existing-project`, `--ref`. Tear down with `./teardown.sh <project> --scope <team> --yes`.
+It creates the project, installs Neon from the Marketplace, deploys, and opens `/setup` for you. `./deploy.sh --help` lists the options: `--idle-minutes`, `--database-url` to bring your own Postgres (for teams where the Neon Marketplace install is not allowed), `--existing-project`, `--ref`. Tear down with `./teardown.sh <project> --scope <team> --yes`.
 
 ### Or let your agent do it
 
@@ -70,7 +70,6 @@ The team that **hosts** the IdP project (not necessarily the attendees' team) ap
 |---|---|---|
 | Deployment Protection on **all** domains (Vercel Authentication or Password), especially with strict protection settings | Production `.vercel.app` needs a login, so attendees and Vercel's SSO can't reach Pocket ID. **Blocks.** | Deploy to another team, or set the new project to Standard Protection before `/setup` |
 | Default **Passport** for new projects | The IdP ends up behind the protection it supplies. **Blocks.** | Deploy to another team, or remove Passport from the IdP project |
-| Team belongs to a **Vercel Organization** | Neon Marketplace install is rejected | `--database-url` with a Postgres you control |
 | **Project expiration** on by default | The IdP project is deleted on schedule, stranding attendees and any team that enforces SSO through it | Extend or turn off expiration on the IdP project for the life of the workshop |
 | Short **production deployment retention** (under 30 days) | Old production deployments are removed | Redeploy, or raise the project's retention, for long-running workshops |
 | **Hobby** plan | Idle cron and Sandbox sessions exceed Hobby limits. **Blocks.** | Use a Pro or Enterprise team |
