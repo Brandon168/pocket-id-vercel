@@ -153,6 +153,60 @@ describe('workshop provisioning', () => {
     expect(saved.allowOwnAccountEdit).toBe(mode === 'vercel-team' ? 'false' : undefined);
   });
 
+  it.each(['passport', 'vercel-team'] as const)('renews signup with fresh tokens behind the same link (%s)', async mode => {
+    await options(mode, 250);
+    const first = await workshop.setupWorkshop('https://idp.test');
+    const name = workshop.getWorkshopName();
+    expect(await store.takeNextSignupToken(name)).toBe(first.signupTokens[0]);
+    const tokenCalls = () => calls.filter(c => c.path === '/signup-tokens');
+    const before = tokenCalls().length;
+    const renewed = await workshop.renewSignupTokens();
+    expect(tokenCalls()).toHaveLength(before + first.signupTokens.length);
+    // Attendee groups only: the owner group never comes from a signup token.
+    const ownerGroup = [...groups.values()].find(g => g.name === 'vercel-role-owner');
+    for (const call of tokenCalls().slice(before)) {
+      expect(call.body).toMatchObject({ ttl: '72h', usageLimit: 100 });
+      expect(call.body.userGroupIds).toHaveLength(mode === 'vercel-team' ? 2 : 1);
+      if (ownerGroup) expect(call.body.userGroupIds).not.toContain(ownerGroup.id);
+    }
+    expect(renewed.signupTokens).toHaveLength(first.signupTokens.length);
+    expect(renewed.signupTokens.some(t => first.signupTokens.includes(t))).toBe(false);
+    expect(renewed.capacity).toBe(first.capacity);
+    expect(renewed.joinUrl).toBe(first.joinUrl);
+    const saved = await store.getWorkshopSetup(name);
+    expect(saved?.signupTokens).toEqual(renewed.signupTokens);
+    expect(saved!.expiresAt.getTime()).toBeGreaterThan(Date.now() + 71 * 60 * 60_000);
+    expect(await store.takeNextSignupToken(name)).toBe(renewed.signupTokens[0]);
+    // The lease is released, so a second renewal works.
+    await expect(workshop.renewSignupTokens()).resolves.toBeTruthy();
+  });
+
+  it('counts signups across every issued token, beyond one page of the provider list', async () => {
+    await options('passport', 1000);
+    const first = await workshop.setupWorkshop('https://idp.test');
+    const renewed = await workshop.renewSignupTokens();
+    // 24 workshop tokens plus 86 others with one signup each: two pages at the 100-per-page cap.
+    const all = [...first.signupTokens, ...renewed.signupTokens, ...Array.from({ length: 86 }, (_, i) => `other-${i}`)];
+    const listFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      const u = new URL(String(url));
+      if (u.pathname !== '/api/signup-tokens' || (init?.method ?? 'GET') !== 'GET') return listFetch(url as string, init);
+      const page = Number(u.searchParams.get('pagination[page]'));
+      const slice = all.slice((page - 1) * 100, page * 100).map(token => ({ token, usageLimit: 100, usageCount: 1 }));
+      return Response.json({ data: slice, pagination: { totalPages: 2, currentPage: page } });
+    });
+    vi.doMock('../lib/lifecycle-store', () => ({ getLifecycleState: async () => ({ status: 'running' }) }));
+    vi.resetModules();
+    const fresh = await import('../lib/workshop');
+    expect((await fresh.getSignupProgress()).used).toBe(24);
+    vi.doUnmock('../lib/lifecycle-store');
+  });
+
+  it('refuses to renew signup before the workshop is prepared', async () => {
+    await options('app');
+    await expect(workshop.renewSignupTokens()).rejects.toThrow(workshop.InvalidInputError);
+  });
+
   it('does not treat provider outages as a missing client or leak provider error bodies', async () => {
     await options('passport'); failLookup = true;
     await expect(workshop.setupWorkshop('https://idp.test')).rejects.toThrow('returned 503');

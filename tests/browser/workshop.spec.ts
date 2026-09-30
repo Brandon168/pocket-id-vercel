@@ -9,6 +9,7 @@ test('choose Passport, prepare, copy credentials, and share the laptop signup li
   let options = { mode: 'app', expectedAttendees: 100, requireEmail: false, emailDomain: null, ownerEmail: null };
   let prepared = false;
   let passportFailure = true;
+  let renewals = 0;
   const setup = { adminUsername: 'instructor', joinUrl: 'http://localhost:3098/join', capacity: 1200, expiresAt: '2026-09-12T12:00:00.000Z' };
   await page.route('**/api/workshop{,/**}', async route => {
     const request = route.request();
@@ -32,7 +33,13 @@ test('choose Passport, prepare, copy credentials, and share the laptop signup li
       if (passportFailure) { passportFailure = false; return route.fulfill({ status: 500, json: { error: 'Simulated outage' } }); }
       return route.fulfill({ json: { clientId: 'workshop-passport', clientSecret: 'browser-test-secret', issuer: 'http://localhost:3098', discoveryUrl: 'http://localhost:3098/.well-known/openid-configuration', callbackUrl: 'https://connect.vercel.com/callback' } });
     }
-    if (path === '/api/workshop/signups') return route.fulfill({ json: { used: 0, capacity: 1200, sandboxRunning: true } });
+    if (path === '/api/workshop/signups') {
+      if (request.method() === 'POST') {
+        renewals++;
+        return route.fulfill({ json: { ...setup, expiresAt: new Date(Date.now() + 72 * 3600_000).toISOString() } });
+      }
+      return route.fulfill({ json: { used: 0, capacity: 1200, sandboxRunning: true } });
+    }
     if (path === '/api/workshop/attendees') return route.fulfill({ json: { idle: true } });
     if (path === '/api/workshop/qr') return route.continue(); // Real QR route.
     throw new Error(`Unexpected request: ${request.method()} ${path}`);
@@ -64,6 +71,12 @@ test('choose Passport, prepare, copy credentials, and share the laptop signup li
   await expect(page.getByRole('img', { name: /QR code for/ })).toBeVisible();
   expect(await page.getByRole('img', { name: /QR code for/ }).evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   await page.getByText('Show optional QR code', { exact: true }).click();
+  // The fixture's signup window is in the past: the console says so and renews in place.
+  await expect(page.getByText(/^Signup closed /)).toBeVisible();
+  await page.getByRole('button', { name: 'Renew signup for 72 hours' }).click();
+  await expect(page.getByText(/Use the same signup link for everyone\. Signup closes /)).toBeVisible();
+  await expect(page.getByText(/^Signup closed /)).toHaveCount(0);
+  expect(renewals).toBe(1);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.screenshot({ path: 'test-results/workshop-passport-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

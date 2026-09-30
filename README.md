@@ -119,7 +119,7 @@ Lost the password? Set `WORKSHOP_ADMIN_SECRET` on the Vercel project and redeplo
 
 Pocket ID always requires a username and treats first and last name as optional. Because the username is the only guaranteed identifier, tell attendees on the signup slide to use `firstname-lastname`; that is how you will find them in the console if they need help, and in Vercel team mode it becomes their email's local part. After registering a passkey, attendees land on Pocket ID's `/settings/account` page (hard-coded in Pocket ID's frontend).
 
-Signup capacity is `expected attendees × 1.2`, rounded up to whole 100-use signup tokens (Pocket ID's per-token cap). `/join` rotates attendees across them. Tokens expire after 72 hours. The console shows live signup counts while Pocket ID is running.
+Signup capacity is `expected attendees × 1.2`, rounded up to whole 100-use signup tokens (Pocket ID's per-token cap). `/join` rotates attendees across them. Tokens expire 72 hours after Prepare; if you prepare early or the event runs longer, click **Renew signup for 72 hours** in the console (same link, same capacity; links opened earlier keep working until they expire). The console shows live signup counts while Pocket ID is running.
 
 This prepares signup tokens, not attendee accounts or Vercel billing seats. Choosing 100 attendees creates 2 tokens (capacity 200); choosing 1,000 creates 12 (capacity 1,200). The extra ten API calls each have a default one-second pause, adding roughly ten seconds plus request time. Accounts are created at signup. Flex does not need preset seat quantities, but team plan, entitlement and commitment checks remain separate; do not assume every Enterprise trial uses Flex.
 

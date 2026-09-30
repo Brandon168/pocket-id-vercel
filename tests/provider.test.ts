@@ -151,6 +151,25 @@ describe.skipIf(!process.env.POCKET_ID_TEST_BINARY)('real Pocket ID provider', (
     expect((await workshop.getSignupProgress()).used).toBe(1);
   });
 
+  it('renews signup with working tokens and keeps the earlier ones valid', async () => {
+    const name = workshop.getWorkshopName();
+    const before = await store.getWorkshopSetup(name);
+    const renewed = await workshop.renewSignupTokens();
+    expect(renewed.signupTokens).toHaveLength(12);
+    const listed = await api('/signup-tokens?pagination[limit]=100');
+    expect(listed.data).toHaveLength(24);
+    for (const [username, token] of [['renewed-attendee', renewed.signupTokens[0]], ['earlier-link-attendee', before!.signupTokens[1]]]) {
+      const signup = await fetch(`${state.origin}/api/signup`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, token }),
+      });
+      expect(signup.status, `${username}: ${signup.status}`).toBe(201);
+    }
+    expect(await store.takeNextSignupToken(name)).toBe(renewed.signupTokens[0]);
+    // Signups on the renewed and the earlier tokens both count.
+    expect((await workshop.getSignupProgress()).used).toBe(3);
+  });
+
   // Vercel team mode presents every email as verified, so an attendee who
   // could edit their own email could claim anyone's Vercel account.
   it('stops attendees changing their own email once Vercel team mode is applied', async () => {
