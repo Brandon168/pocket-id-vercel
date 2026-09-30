@@ -46,7 +46,16 @@ curl -fsSL https://raw.githubusercontent.com/Brandon168/pocket-id-vercel/main/de
   | bash -s -- --scope <team-slug> --project idp-ws-<date>-<topic>
 ```
 
-It creates the project, installs Neon from the Marketplace, deploys, and opens `/setup` for you. `./deploy.sh --help` lists the options: `--idle-minutes`, `--database-url` to bring your own Postgres (for teams where the Neon Marketplace install is not allowed), `--existing-project`, `--ref`. Tear down with `./teardown.sh <project> --scope <team> --yes`.
+It creates the project, installs Neon from the Marketplace, deploys, and opens `/setup` for you. `./deploy.sh --help` lists the options: `--idle-minutes`, `--database-url` to bring your own Postgres (for teams where the Neon Marketplace install is not allowed), `--existing-project`, `--ref`, `--repo`. Tear down with `./teardown.sh <project> --scope <team> --yes`.
+
+**From a private copy of the template** (for example an internal fork), `raw.githubusercontent.com` answers 404, so fetch the script with the GitHub CLI instead. It then clones the template with the same `gh` login, and the Vercel project has no Git connection afterwards:
+
+```bash
+gh api repos/<owner>/<repo>/contents/deploy.sh -H 'Accept: application/vnd.github.raw' \
+  | bash -s -- --repo <owner>/<repo> --scope <team-slug> --project idp-ws-<date>-<topic>
+```
+
+`npx skills add <owner>/<repo>@pocket-id-workshop` works for a private repo too, if your git or `gh` login can read it.
 
 ### Or let your agent do it
 

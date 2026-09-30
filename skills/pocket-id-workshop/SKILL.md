@@ -47,7 +47,9 @@ curl -fsSL https://raw.githubusercontent.com/Brandon168/pocket-id-vercel/main/de
   | bash -s -- --scope <team-slug> --project idp-ws-<yyyymmdd>-<topic> --no-open
 ```
 
-Or from a checkout: `./deploy.sh --scope <team> --project <name>`. Options: `--idle-minutes`, `--database-url`/`--database-url-unpooled` (bring your own Postgres), `--existing-project`, `--ref`.
+Or from a checkout: `./deploy.sh --scope <team> --project <name>`. Options: `--idle-minutes`, `--database-url`/`--database-url-unpooled` (bring your own Postgres), `--existing-project`, `--ref`, `--repo <owner/name>` (template repo; private repos work when `gh` is signed in).
+
+If the template repo is private, `raw.githubusercontent.com` returns 404. Fetch the script with `gh api repos/<owner>/<repo>/contents/deploy.sh -H 'Accept: application/vnd.github.raw' | bash -s -- --repo <owner>/<repo> --scope …` instead.
 
 Alternative: the **Deploy with Vercel** button in the README (same result; clones a repo into the user's GitHub).
 
