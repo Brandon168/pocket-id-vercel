@@ -141,7 +141,15 @@ add_env() {
 }
 
 step "Database"
-if [[ -n "$DB_URL" ]]; then
+# A redeploy of an existing project keeps its database. Installing Neon again
+# fails on the existing env vars but still leaves an unconnected Neon resource.
+HAS_DB=""
+if [[ -n "$EXISTING" ]] && vercel env ls production --scope "$SCOPE" --cwd "$WORK" 2>/dev/null | grep -qE '^ *DATABASE_URL_UNPOOLED '; then
+  HAS_DB=1
+fi
+if [[ -n "$HAS_DB" && -z "$DB_URL" ]]; then
+  note "project already has DATABASE_URL_UNPOOLED; keeping its database"
+elif [[ -n "$DB_URL" ]]; then
   note "using the Postgres you provided"
   add_env DATABASE_URL "$DB_URL"
   add_env DATABASE_URL_UNPOOLED "$DB_URL_UNPOOLED"
