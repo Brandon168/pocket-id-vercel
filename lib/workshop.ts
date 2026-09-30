@@ -118,11 +118,31 @@ async function configureSignups(origin: string, options: WorkshopOptions): Promi
     // Attendees who skip passkey creation stay signed in for the whole event.
     sessionDuration: String(30 * 24 * 60),
   });
+  if (vercelTeam) Object.assign(configuration, teamModeAccountLock);
   await pocketApi(origin, '/application-configuration', {
     method: 'PUT',
     body: JSON.stringify(configuration),
   });
   await pause();
+}
+
+// Vercel team mode marks every email as verified and Vercel links SSO
+// identities to existing accounts by email, so attendees must not be able to
+// change their own email after signup (Pocket ID allows it by default, and
+// the proxy only rewrites the signup request). Admin edits still work.
+const teamModeAccountLock = { allowOwnAccountEdit: 'false' } as const;
+
+// Applies the lock to workshops prepared before it existed. Returns whether a
+// change was needed.
+async function lockOwnAccountEdit(origin: string): Promise<boolean> {
+  const all = await pocketApi<Array<{ key: string; value: string }>>(origin, '/application-configuration/all');
+  const configuration = Object.fromEntries(all.map(({ key, value }) => [key, value]));
+  if (configuration.allowOwnAccountEdit === teamModeAccountLock.allowOwnAccountEdit) return false;
+  await pocketApi(origin, '/application-configuration', {
+    method: 'PUT',
+    body: JSON.stringify({ ...configuration, ...teamModeAccountLock }),
+  });
+  return true;
 }
 
 async function ensureAdmin(origin: string): Promise<User> {
@@ -680,9 +700,10 @@ export function getWorkshopName(): string {
   return workshopName;
 }
 
-// Re-applies the group restriction on the mode's client. Runs once per
-// process from the console's status call, so deployments prepared by earlier
-// versions (which created unrestricted clients) heal without a redeploy.
+// Re-applies the group restriction on the mode's client and, in Vercel team
+// mode, the account-edit lock. Runs once per process from the console's
+// status call, so deployments prepared by earlier versions heal without a
+// redeploy.
 const repaired = new Set<string>();
 
 export async function repairConfigurationOnce(): Promise<void> {
@@ -696,6 +717,10 @@ export async function repairConfigurationOnce(): Promise<void> {
   repaired.add(workshopName);
   try {
     const origin = await getKnownSandboxOrigin();
+    // First, so a problem with the client below cannot leave emails editable.
+    if (options.mode === 'vercel-team' && (await lockOwnAccountEdit(origin))) {
+      console.warn('Locked attendee self-service account edits on a workshop prepared by an earlier version');
+    }
     const groupIds = await attendeeGroupIds(origin, options.mode);
     const clientId = options.mode === 'vercel-team' ? vercelSsoClientId : options.mode === 'passport' ? passportClientId : 'workshop-app';
     await restrictClientToGroups(origin, clientId, groupIds);

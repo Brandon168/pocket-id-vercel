@@ -5,6 +5,7 @@ import { requireSecrets } from './secrets';
 import {
   acquireLifecycleLease,
   getLifecycleState,
+  type LifecycleState,
   markFailed,
   markRunning,
   markStarting,
@@ -280,7 +281,26 @@ async function keepSessionAlive(idleMinutes: number): Promise<void> {
   }
 }
 
-export async function getControllerStatus() {
+export type PublicControllerStatus = {
+  name: string;
+  status: LifecycleState['status'];
+  sandboxStatus: string;
+  lastRequestAt: Date;
+  sessionExpiresAt: Date | null;
+  failed: boolean;
+};
+
+export type ControllerStatus = PublicControllerStatus & Pick<LifecycleState, 'origin' | 'leaseOwner' | 'leaseUntil' | 'lastError'>;
+
+// The Sandbox origin reaches Pocket ID without the controller's proxy (and
+// its signup email policy), and lastError can carry internal detail, so the
+// unauthenticated status endpoint only gets the public subset.
+export function publicControllerStatus(status: ControllerStatus): PublicControllerStatus {
+  const { name, status: lifecycle, sandboxStatus, lastRequestAt, sessionExpiresAt, failed } = status;
+  return { name, status: lifecycle, sandboxStatus, lastRequestAt, sessionExpiresAt, failed };
+}
+
+export async function getControllerStatus(): Promise<ControllerStatus> {
   const state = await getLifecycleState(sandboxName);
   let sandboxStatus: string = 'unavailable';
   try {
@@ -289,7 +309,18 @@ export async function getControllerStatus() {
   } catch {
     // Named sandbox may not exist yet.
   }
-  return { ...state, sandboxStatus };
+  return {
+    name: state.name,
+    status: state.status,
+    sandboxStatus,
+    lastRequestAt: state.lastRequestAt,
+    sessionExpiresAt: state.sessionExpiresAt,
+    failed: state.status === 'failed',
+    origin: state.origin,
+    leaseOwner: state.leaseOwner,
+    leaseUntil: state.leaseUntil,
+    lastError: state.lastError,
+  };
 }
 
 export async function stopSandboxNow(): Promise<void> {

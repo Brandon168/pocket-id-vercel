@@ -142,7 +142,7 @@ While Pocket ID still works, remove the workshop's Passport assignments and any 
 
 Pocket ID embeds a single-host actor system, so exactly one process may run per database. The controller enforces that:
 
-- **One Sandbox, one process.** A named persistent Sandbox runs Pocket ID v2.14.0 (downloaded and SHA-256-verified on first boot). The controller proxies every request to it and rewrites redirects back to the stable hostname. In Vercel team mode the proxy also rewrites the email on `POST /api/signup` to the verified domain.
+- **One Sandbox, one process.** A named persistent Sandbox runs Pocket ID v2.14.0 (downloaded and SHA-256-verified on first boot). The controller proxies every request to it and rewrites redirects back to the stable hostname. In Vercel team mode the proxy also rewrites the email on `POST /api/signup` to the verified domain, and Pocket ID's self-service account editing is turned off so an attendee cannot change that email afterwards (Vercel links SSO identities by verified email). Instructors can still edit any account in Pocket ID admin.
 - **Neon-backed lease.** Concurrent cold requests elect one starter through an expiring lease; the rest wait for the same origin. Fluid compute can run many controller invocations without starting a second Pocket ID.
 - **Scale to zero.** A one-minute cron stops and snapshots the Sandbox after `SANDBOX_IDLE_MINUTES` (default 120) without traffic. The next request resumes it inside the same HTTP call. Graceful stop clears the stale actor-host row so restart is never blocked.
 - **Shared database.** One Neon project holds Pocket ID's tables and the controller's lifecycle, workshop, secrets, and Vercel-connection tables. Set `CONTROLLER_DATABASE_URL` to split them.
@@ -168,6 +168,7 @@ None are required. The Neon store injects `DATABASE_URL` and `DATABASE_URL_UNPOO
 
 ```bash
 curl https://<project>.vercel.app/api/lifecycle/status          # inspect without waking the Sandbox
+curl -u :$INSTRUCTOR_PASSWORD https://<project>.vercel.app/api/lifecycle/status  # adds lastError, lease, Sandbox origin
 curl -X POST https://<project>.vercel.app/api/lifecycle/stop \
   -H "Authorization: Bearer $LIFECYCLE_ADMIN_SECRET"             # manual graceful stop
 ```

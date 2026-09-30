@@ -145,6 +145,14 @@ describe('workshop provisioning', () => {
     expect(secrets).toBe(1);
   });
 
+  it.each(['app', 'passport', 'vercel-team'] as const)('locks attendee self-service account edits only in Vercel team mode (%s)', async mode => {
+    await options(mode);
+    await workshop.setupWorkshop('https://idp.test');
+    const saved = calls.find(c => c.path === '/application-configuration' && c.method === 'PUT')!.body;
+    expect(saved.emailsVerified).toBe(mode === 'vercel-team' ? 'true' : 'false');
+    expect(saved.allowOwnAccountEdit).toBe(mode === 'vercel-team' ? 'false' : undefined);
+  });
+
   it('does not treat provider outages as a missing client or leak provider error bodies', async () => {
     await options('passport'); failLookup = true;
     await expect(workshop.setupWorkshop('https://idp.test')).rejects.toThrow('returned 503');
@@ -186,6 +194,17 @@ describe('Passport credentials endpoint', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(await response.text()).not.toContain('private-secret');
   });
+});
+
+it('keeps the Sandbox origin, lease, and startup error out of the public status', async () => {
+  const { publicControllerStatus } = await vi.importActual<typeof import('../lib/sandbox-control')>('../lib/sandbox-control');
+  const full = {
+    name: 'pocket-id', status: 'failed' as const, sandboxStatus: 'stopped', lastRequestAt: new Date(0), sessionExpiresAt: null, failed: true,
+    origin: 'https://sb-private.vercel.run', leaseOwner: 'owner', leaseUntil: new Date(0), lastError: 'internal detail',
+  };
+  const shown = publicControllerStatus(full);
+  expect(shown).toEqual({ name: 'pocket-id', status: 'failed', sandboxStatus: 'stopped', lastRequestAt: new Date(0), sessionExpiresAt: null, failed: true });
+  expect(JSON.stringify(shown)).not.toContain('vercel.run');
 });
 
 it('validates Passport explicitly, preserves legacy defaults, and rejects unknown modes', () => {

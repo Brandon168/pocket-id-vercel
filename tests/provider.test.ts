@@ -150,4 +150,46 @@ describe.skipIf(!process.env.POCKET_ID_TEST_BINARY)('real Pocket ID provider', (
     expect(verify('RSA-SHA256', Buffer.from(`${headerPart}.${payloadPart}`), createPublicKey({ key: jwk, format: 'jwk' }), Buffer.from(signature, 'base64url'))).toBe(true);
     expect((await workshop.getSignupProgress()).used).toBe(1);
   });
+
+  // Vercel team mode presents every email as verified, so an attendee who
+  // could edit their own email could claim anyone's Vercel account.
+  it('stops attendees changing their own email once Vercel team mode is applied', async () => {
+    const name = workshop.getWorkshopName();
+    const setup = await store.getWorkshopSetup(name);
+    const signup = await fetch(`${state.origin}/api/signup`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'email-attendee', email: 'email-attendee@event.example.com', token: setup!.signupTokens[0] }),
+    });
+    expect(signup.ok, `signup: ${signup.status}`).toBe(true);
+    const cookie = signup.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+    const changeOwnEmail = () => fetch(`${state.origin}/api/users/me`, {
+      method: 'PUT', headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ username: 'email-attendee', email: 'someone-else@vercel.com' }),
+    });
+    const me = async () => (await (await fetch(`${state.origin}/api/users/me`, { headers: { cookie } })).json()).email;
+
+    // Pocket ID's default: self-service edits are allowed (the hole).
+    await changeOwnEmail();
+    expect(await me()).toBe('someone-else@vercel.com');
+
+    // Switching the prepared workshop to team mode and repairing it applies the lock.
+    await store.saveWorkshopOptions(name, workshop.parseWorkshopOptions({ mode: 'vercel-team', emailDomain: 'event.example.com' }));
+    await store.saveVercelConnection(name, { clientId: 'vercel-sso', clientSecret: 'unused', callbackUrl: workshop.defaultVercelCallbackUrl, teamSlug: null, scimProviderId: null, scimEndpoint: null });
+    await api(`/users?search=email-attendee`).then(async ({ data }) => {
+      const admin = await fetch(`${state.origin}/api/users/${data[0].id}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json', 'x-api-key': 'isolated-provider-test-key' },
+        body: JSON.stringify({ username: 'email-attendee', email: 'email-attendee@event.example.com', emailVerified: true }),
+      });
+      expect(admin.ok, `admin reset: ${admin.status}`).toBe(true);
+    });
+    // A fresh module instance, as after a redeploy: repair runs once per process.
+    vi.resetModules();
+    const redeployed = await import('../lib/workshop');
+    await redeployed.repairConfigurationOnce();
+    const config = await api('/application-configuration/all');
+    expect(config.find((entry: { key: string }) => entry.key === 'allowOwnAccountEdit')?.value).toBe('false');
+
+    await changeOwnEmail();
+    expect(await me()).toBe('email-attendee@event.example.com');
+  });
 });

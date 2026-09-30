@@ -120,7 +120,7 @@ curl -s -u ":<password>" https://<project>.vercel.app/api/workshop/vercel
 - Attendee locked out or skipped passkey: `POST /api/workshop/login-link {"userId":"…"}` → one-time 12-character code and link, valid one hour, no email.
 - Attendee missing in Vercel (team mode): check the row's email has the right domain, then `POST /api/workshop/vercel/sync`. `GET /api/workshop/vercel` shows `scim.lastError` in plain language when a push failed.
 - Instructor needs Pocket ID admin: `POST /api/workshop/admin-login` → one-time URL that lands on `/settings/admin/users` as `instructor`. A second admin named `static-api-user-…` is the console's service account; do not delete it.
-- Health: `GET /api/lifecycle/status` (public, never wakes the Sandbox). Idle stop after `SANDBOX_IDLE_MINUTES` (default 120); the next request resumes it in-line.
+- Health: `GET /api/lifecycle/status` (public, never wakes the Sandbox; send the instructor Basic auth to also get `lastError`, the lease, and the Sandbox origin). Idle stop after `SANDBOX_IDLE_MINUTES` (default 120); the next request resumes it in-line.
 
 ## Step 5: tear down
 
@@ -147,4 +147,4 @@ Or by hand: `vercel integration resource remove <project>-db --disconnect-all --
 | Vercel's provider picker shows "Continue setup" drafts | Stale drafts from earlier attempts; choosing Custom OIDC / Custom SCIM resets them, which is fine. |
 | Attendee typed the wrong email domain | Cannot happen in team mode; the proxy rewrites it. Check `/api/workshop/attendees`. |
 | Neon install fails during deploy | Organization child team or plan choice required; see deploy.sh's message. Use `--database-url` or a standalone team. |
-| `/api/lifecycle/status` shows `failed` | The next real request retries the start automatically; read `lastError`. |
+| `/api/lifecycle/status` shows `failed` | The next real request retries the start automatically; read `lastError` (instructor auth required). |
